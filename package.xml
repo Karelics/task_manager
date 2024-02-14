@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>task_manager</name>
+  <version>2024.7.0</version>
+  <description>
+    Centralized single-robot task management to handle incoming and possibly conflicting tasks
+    from multiple different sources
+  </description>
+  <maintainer email="janne.karttunen@karelics.fi">Janne Karttunen</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>action_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>rosbridge_library</depend>
+  <depend>task_manager_msgs</depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>example_interfaces</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
