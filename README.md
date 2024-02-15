@@ -124,7 +124,7 @@ docker exec -it task_manager bash
 python3 -m pytest workspaces/ros2_ws/src/task_manager/test/
 ```
 
-Simply create a new parameter file declaring your tasks, and you are ready! Launch the Task Manager with this newly created file, for example:
+Create a new parameter file declaring your tasks, and you are ready to launch the Task Manager:
 ```
 ros2 launch task_manager task_manager.launch.py params_file:=/workspaces/ros2_ws/src/task_manager/params/task_manager_example.yaml
 ```
