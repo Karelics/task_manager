@@ -39,7 +39,7 @@ RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
 # Fix autocompletion
 RUN echo 'eval "$(register-python-argcomplete3 colcon)"' >> /opt/ros/${ROS_DISTRO}/setup.sh
 
-# Source the new workspace in the main terminal  # TODO Handle the path correctly
+# Source the new workspace in the main terminal
 COPY docker/ros_entrypoint.sh /ros_entrypoint.sh
 ENTRYPOINT ["/ros_entrypoint.sh"]
 
