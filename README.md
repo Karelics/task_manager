@@ -114,7 +114,15 @@ Task Manager is maintained by Karelics Oy. Current active maintainers:
 
 <!--
 ## Docker installation
+
 ```
-docker build . -f task_manager/docker/Dockerfile -t task_manager
+docker build . -f docker/Dockerfile -t task_manager
+docker compose -f docker/docker-compose.yaml up
+
+```
+In another terminal
+```
+docker exec -it task_manager bash
+python3 -m pytest workspaces/ros2_ws/src/task_manager/test/
 ```
 -->
