@@ -1,13 +1,19 @@
 # ROS 2 Task Manager
 
 Task Manager ROS 2 package is a solution to start, handle and track tasks from multiple different sources in a centralized way on a single robot. If you want to:
-- Have an easy way to start new tasks from any source: UI, voice control, command line, etc.
+- Have an easy way to start new tasks from any local or web source: UI, voice control, command line, etc.
 - Track all the currently active tasks and their end results on your robot
 - Automatically cancel the previous task if a new conflicting one is given
 - Combine multiple smaller tasks into a Mission
 - Implement custom behavior for example on task start and end
 
 Task Manager is your solution!
+
+
+<p align="center">
+<img src="images/task_manager_overview.png" alt="drawing" width="600"/>
+</p>
+
 
 ## Features
 1. [Tasks](#tasks)
@@ -37,7 +43,7 @@ ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/Execut
 ```
 Note that the `task_data` is the json-formatted version of the action or service message interface.
 
-Tasks provide their end status with the `status` field in the result using TaskStatus enumeration.
+Tasks provide their end status with the `status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskStatus.msg) enumeration.
 
 ### Active tasks list <a name="active-tasks"></a>
 It is possible to track all the currently active tasks that have their status as `IN_PROGRESS` by subscribing to `/task_manager/active_tasks` topic. Also, the end task status is published into this topic just before it is removed from the list.
@@ -61,6 +67,10 @@ Task Manager provides a way to combine multiple tasks into a larger Mission. Thi
 
 Mission can be started by calling `system/mission` task.
 
+<p align="center">
+<img src="images/mission.jpg" alt="drawing" width="800"/>
+</p>
+
 ### Task Cancelling <a name="task-cancelling"></a>
 Tasks can be cancelled by calling a `system/cancel_tasks` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
 
@@ -72,25 +82,25 @@ Task manager provides a `system/stop` task, which can be called to stop all the 
 ## Public API
 
 ### Published topics
-| Topic                      | Description                                                                                                                                       | Message interface |
-|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|-------------------|
-| /task_manager/active_tasks | Publishes all the tasks that are currently in progress. Reports also the task's final completion status before the task is removed from the list. | ActiveTaskArray   |
-| /task_manager/results      | Publishes the end results of all the tasks                                                                                                        | TaskDoneResult    |
+| Topic                      | Description                                                                                                                                       | Message interface                                                                                  |
+|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| /task_manager/active_tasks | Publishes all the tasks that are currently in progress. Reports also the task's final completion status before the task is removed from the list. | [ActiveTaskArray](https://github.com/Karelics/task_manager_msgs/blob/main/msg/ActiveTaskArray.msg) |
+| /task_manager/results      | Publishes the end results of all the tasks                                                                                                        | [TaskDoneResult](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskDoneResult.msg)   |
 
 ### Actions
 | Action topic               | Description                     | Message interface |
 |----------------------------|---------------------------------|-------------------|
-| /task_manager/execute_task | Starts any task with given data | ExecuteTask       |
+| /task_manager/execute_task | Starts any task with given data | [ExecuteTask](https://github.com/Karelics/task_manager_msgs/blob/main/action/ExecuteTask.action)       |
 
 ## Available tasks
 
 The following tasks are available by default from the Task Manager
 
-| Task name          | Description                                                                     | Message interface |
-|--------------------|---------------------------------------------------------------------------------|-------------------|
-| system/mission     | Starts a mission                                                                | Mission           |
-| system/cancel_task | Cancels the given tasks by Task ID                                              | CancelTasks       |
-| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True` | StopTasks         |
+| Task name          | Description                                                                     | Message interface                                                                          |
+|--------------------|---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| system/mission     | Starts a mission                                                                | [Mission](https://github.com/Karelics/task_manager_msgs/blob/main/action/Mission.action)   |
+| system/cancel_task | Cancels the given tasks by Task ID                                              | [CancelTasks](https://github.com/Karelics/task_manager_msgs/blob/main/srv/CancelTasks.srv) |
+| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True` | [StopTasks](https://github.com/Karelics/task_manager_msgs/blob/main/srv/StopTasks.srv)     |
 
 ## Parameters
 
