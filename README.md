@@ -107,22 +107,31 @@ The following tasks are available by default from the Task Manager
 
 The parameters that have default as "-" are mandatory.
 
+## Installation
+### Docker
+Prerequisites:
+- Docker and Docker Compose installed in the system
+
+Run in the current repository location:
+```
+cd docker
+docker compose up
+```
+
+Verify that everything works correctly by running tests in a separate terminal:
+```
+docker exec -it task_manager bash
+python3 -m pytest workspaces/ros2_ws/src/task_manager/test/
+```
+
+Simply create a new parameter file declaring your tasks, and you are ready! Launch the Task Manager with this newly created file, for example:
+```
+ros2 launch task_manager task_manager.launch.py params_file:=/workspaces/ros2_ws/src/task_manager/params/task_manager_example.yaml
+```
+
+
 ## Maintainers
 
 Task Manager is maintained by Karelics Oy. Current active maintainers:
 - [Janne Karttunen](https://www.linkedin.com/in/janne-karttunen-a22375209/)
 
-<!--
-## Docker installation
-
-```
-docker build . -f docker/Dockerfile -t task_manager
-docker compose -f docker/docker-compose.yaml up
-
-```
-In another terminal
-```
-docker exec -it task_manager bash
-python3 -m pytest workspaces/ros2_ws/src/task_manager/test/
-```
--->
