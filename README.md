@@ -28,7 +28,7 @@ Task Manager is your solution!
 Any existing ROS 2 service or action can be declared as a "Task" in a parameter file. In addition to default service and action features, tasks have the following properties:
 -  **Blocking tasks**: Any task can be marked as a blocking task. Only a single blocking task can be active at a time in the whole system, and if another blocking task request is received, Task Manager will cancel the previous blocking task automatically. For example, tasks `navigate_to_pose` and `change_map` should never be active at the same time.
 -  **Cancel-on-stop**: Tasks can be cancelled automatically when the global "STOP" task is called.
--  **Single goal or reentrant execution**: Task can be executed in two different modes:
+-  **Single-goal or reentrant execution**: Task can be executed in two different modes:
    - Single-goal behavior (default): Only one task of the same type can be active at once, and a new task request of same type will cancel the previous one.
    - Reentrant: Task runs in parallel with any new coming requests for the same task.
 - **Cancel reported as success**: For some continuous tasks, such as `record_video`, user might want to stop the task execution by cancelling it but still report the end status as `DONE`.
