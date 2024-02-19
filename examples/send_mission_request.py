@@ -19,7 +19,7 @@ class MissionSender(Node):
         self._client.wait_for_server()
 
     def start_mission(self):
-        """ Sends a Mission with 2 consecutive Stop subtask request to Task Manager"""
+        """ Sends a Mission with 2 consecutive Stop subtask requests to Task Manager"""
         goal = ExecuteTask.Goal()
         goal.task = "system/mission"
         goal.source = "Mission Sender"
