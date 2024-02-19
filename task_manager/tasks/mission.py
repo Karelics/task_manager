@@ -50,7 +50,7 @@ class Mission:
         ActionServer(
             node=node,
             action_type=MissionAction,
-            action_name=f"{task_topic_prefix}/system/mission",
+            action_name=f"_{task_topic_prefix}/system/mission",
             execute_callback=self.execute_cb,
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
