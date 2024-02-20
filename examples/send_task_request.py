@@ -22,8 +22,8 @@ class TaskSender(Node):
         goal = ExecuteTask.Goal()
         goal.task = "system/stop"
         goal.source = "Task Sender"
-        print("Sending stop -task from TaskSender node")
         goal.task_data = json.dumps(extract_values(StopTasks.Request()))
+        print("Sending stop -task from TaskSender node")
         future = self._client.send_goal_async(goal)
         future.add_done_callback(self._task_accepted_callback)
 
@@ -44,8 +44,10 @@ class TaskSender(Node):
         print(f"Task ID: {task_id}")
         print(f"Task result: {task_result}")
 
-        # Note that task_status is different from the Action status, which doesn't match the TaskStatus!
+        # Note that the response status from the Action server is different from the task_status!
         # response.status == GoalStatus.STATUS_SUCCEEDED
+
+        raise KeyboardInterrupt  # Stopping the execution of the Node
 
 
 if __name__ == "__main__":

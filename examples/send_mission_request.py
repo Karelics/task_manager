@@ -61,8 +61,10 @@ class MissionSender(Node):
 
             # Subtask result is published to /task_manager/results
 
-        # Note that task_status is different from the Action status, which doesn't match the TaskStatus!
+        # Note that the response status from the Action server is different from the task_status!
         # response.status == GoalStatus.STATUS_SUCCEEDED
+
+        raise KeyboardInterrupt  # Stopping the execution of the Node
 
 
 if __name__ == "__main__":
