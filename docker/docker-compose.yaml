@@ -10,4 +10,6 @@ services:
     network_mode: host
     stdin_open: true
     tty: true
+    volumes:
+      - ../:/workspaces/ros2_ws/src/task_manager/
     command: bash
