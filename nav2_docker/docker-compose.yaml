@@ -1,0 +1,30 @@
+version: "3"
+
+services:
+  nav2:
+    image: nav2-humble
+    build:
+      context: ../
+      dockerfile: nav2_docker/Dockerfile
+    container_name: nav2-humble
+    stop_signal: SIGINT
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.gazebo/:/home/user/.gazebo/  # Mount Gazebo files, otherwise starting it takes ages.
+    environment:
+      - DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - TURTLEBOT3_MODEL=waffle
+      - GAZEBO_MODEL_PATH=/opt/ros/humble/share/turtlebot3_gazebo/models
+    command: ros2 launch nav2_bringup tb3_simulation_launch.py headless:=False
+
+# TODO Mention in the tutorial about the first time start taking a long time. If you don't see the robot
+#  spawning, restart.
+# TODO After starting the world, give a pose estimate.
+
+# ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task: navigation/spin, task_data: "{\"target_yaw\": 6.28}"}'
+

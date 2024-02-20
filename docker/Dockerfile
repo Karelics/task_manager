@@ -16,6 +16,7 @@ ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-nav2-msgs \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

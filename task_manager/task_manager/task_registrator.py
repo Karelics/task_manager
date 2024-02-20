@@ -23,7 +23,11 @@ from rclpy.client import Client
 from rclpy.node import Node
 
 # Thirdparty
-from rosbridge_library.internal.message_conversion import FieldTypeMismatchException, populate_instance
+from rosbridge_library.internal.message_conversion import (
+    FieldTypeMismatchException,
+    NonexistentFieldException,
+    populate_instance
+)
 
 # Karelics messages
 from task_manager_msgs.action import ExecuteTask
@@ -183,7 +187,7 @@ def populate_msg(task_data: str, msg_interface: Any):
 
     try:
         task_goal_message = populate_message_from_json(task_data, msg_interface)
-    except (KeyError, RuntimeError, FieldTypeMismatchException) as e:
+    except (KeyError, RuntimeError, FieldTypeMismatchException, NonexistentFieldException) as e:
         fields_and_types = msg_interface.get_fields_and_field_types()
         raise ROSGoalParsingError(
             f"Unable to parse task data, check the message interface for the correct message data format. "
