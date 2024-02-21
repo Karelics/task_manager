@@ -1,0 +1,16 @@
+string task_id      # Unique ID for the task. If empty, unique ID is automatically generated
+string task         # Name of the task
+string source       # Source for the task. For example "Cloud", "Voice Control"
+string task_data    # Request / Goal message of the task in json formatted string, for example '{"order": 3}'
+---
+string task_id
+string result
+string status
+string error_code
+
+string ERROR_DUPLICATE_TASK_ID=duplicate_id                    # Task with the same ID already exists
+string ERROR_TASK_DATA_PARSING_FAILED=task_data_parsing_failed # Failed to parse json formatted ROS message
+string ERROR_TASK_START_ERROR=task_start_failed                # Task didn't start correctly
+string ERROR_TASK_CANCEL_FAILED=task_cancel_failed             # Task didn't cancel correctly
+string ERROR_UNKNOWN_TASK=unknown_task                         # Requested task does not exist. Declare using parameters
+---

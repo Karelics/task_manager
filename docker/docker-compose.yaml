@@ -11,5 +11,6 @@ services:
     stdin_open: true
     tty: true
     volumes:
-      - ../:/workspaces/ros2_ws/src/task_manager/
+      - ../task_manager:/workspaces/ros2_ws/src/task_manager/
+      - ../task_manager_msgs:/workspaces/ros2_ws/src/task_manager_msgs/
     command: bash

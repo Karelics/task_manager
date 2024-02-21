@@ -1,0 +1,4 @@
+string[] cancelled_tasks            # Task IDs of the active tasks to be cancelled
+---
+bool success                        # Success if all the cancels pass
+string[] successful_cancels         # List of successfully cancelled tasks
