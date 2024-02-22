@@ -25,6 +25,6 @@ services:
 # TODO Mention in the tutorial about the first time start taking a long time. If you don't see the robot
 #  spawning, restart.
 # TODO After starting the world, give a pose estimate.
-
+# TODO Mention that we need to do xhost +local:root~ to make the simulation to work correctly
 # ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task: navigation/spin, task_data: "{\"target_yaw\": 6.28}"}'
 
