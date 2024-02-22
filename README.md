@@ -124,7 +124,7 @@ Prerequisites:
 
 Run in the current repository location:
 ```
-cd docker
+cd docker/task_manager/
 docker compose up
 ```
 

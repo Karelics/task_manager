@@ -1,5 +1,15 @@
 FROM osrf/ros:humble-desktop-full
 
+# Setup user for Gazebo init mounting and GUI to work correctly
+ARG UNAME=user
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g ${GID} -o ${UNAME}
+RUN useradd -m -u ${UID} -g ${GID} -o -s /bin/bash ${UNAME}
+RUN usermod -aG sudo ${UNAME}
+RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+USER ${UNAME}
+
 # Disable terminal interaction for apt
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -10,20 +20,17 @@ SHELL ["/bin/bash", "-c"]
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Install dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
     ros-$ROS_DISTRO-navigation2 \
     ros-$ROS_DISTRO-nav2-bringup \
     ros-$ROS_DISTRO-turtlebot3-gazebo \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Fix autocompletion
-RUN echo 'eval "$(register-python-argcomplete3 colcon)"' >> /opt/ros/${ROS_DISTRO}/setup.sh
+    && sudo apt-get clean && \
+    sudo rm -rf /var/lib/apt/lists/*
 
 # Source ROS workspace automatically when new terminal is opened
-RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
+RUN sudo echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
 
 
 # Source ROS in the main terminal

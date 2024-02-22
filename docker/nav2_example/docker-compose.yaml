@@ -14,10 +14,10 @@ services:
     tty: true
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - ${HOME}/.gazebo/:/home/user/.gazebo/  # Mount Gazebo files, otherwise starting it takes ages.
+      - ./gazebo_init/:/home/user/.gazebo/  # Mount Gazebo files, otherwise starting it takes ages.
     environment:
       - DISPLAY
       - QT_X11_NO_MITSHM=1
       - TURTLEBOT3_MODEL=waffle
-      - GAZEBO_MODEL_PATH=/opt/ros/humble/share/turtlebot3_gazebo/models
+      - GAZEBO_MODEL_PATH=/home/user/.gazebo/models:/opt/ros/humble/share/turtlebot3_gazebo/models
     command: ros2 launch nav2_bringup tb3_simulation_launch.py headless:=False

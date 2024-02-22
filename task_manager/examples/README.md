@@ -35,7 +35,6 @@ ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_m
 
 ```
 cd <REPO_PATH>/task_manager/docker/nav2_example
-xhost +local:`docker inspect --format='{{ .Config.Hostname }}' nav2-humble`
 docker compose up
 ```
 - Your first simulation launch most likely takes a long time, around 1-5 minutes due to slow Gazebo startup. Gazebo files are automatically cached so any subsequent container starts should be fast. Robot spawning might crash on the first time due to this slow start, but a restart will fix the issue 
