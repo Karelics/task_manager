@@ -1,0 +1,16 @@
+version: "3"
+
+services:
+  task_manager:
+    image: task_manager
+    build:
+      context: ../../
+      dockerfile: docker/task_manager/Dockerfile
+    container_name: task_manager
+    network_mode: host
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../../task_manager:/workspaces/ros2_ws/src/task_manager/
+      - ../../task_manager_msgs:/workspaces/ros2_ws/src/task_manager_msgs/
+    command: bash

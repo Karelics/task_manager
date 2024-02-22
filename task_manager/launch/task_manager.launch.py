@@ -43,7 +43,7 @@ def generate_launch_description() -> LaunchDescription:
                 "params_file",
                 description="Full path to the ROS2 parameters file to use for Task Manager node",
                 default_value=os.path.join(
-                    get_package_share_path("task_manager"), "params", "task_manager_example.yaml"
+                    get_package_share_path("task_manager"), "params", "task_manager_defaults.yaml"
                 ),
             ),
             task_manager,

@@ -13,6 +13,7 @@ from rosbridge_library.internal.message_conversion import extract_values, popula
 
 
 def get_navigation_goal_in_json(x, y):
+    """ Returns NavigateToPose.Goal in json format"""
     nav2_goal = NavigateToPose.Goal()
     nav2_goal.pose.header.frame_id = "map"
     nav2_goal.pose.pose.position.x = x
@@ -21,11 +22,13 @@ def get_navigation_goal_in_json(x, y):
 
 
 def get_spin_goal_in_json(target_yaw_rad):
+    """ Returns Spin.Goal in json format"""
     spin_goal = Spin.Goal(target_yaw=target_yaw_rad)
     return json.dumps(extract_values(spin_goal))
 
 
 def start_navigation_task(execute_task_client):
+    """ Executes a navigation task asynchronously """
     goal = ExecuteTask.Goal()
     goal.task = "navigation/navigate_to_pose"
     goal.source = "Nav2_example"
@@ -35,7 +38,7 @@ def start_navigation_task(execute_task_client):
 
 
 def start_spin_task(execute_task_client):
-    """ Spin for 360 degrees"""
+    """ Spin for 180 degrees"""
     goal = ExecuteTask.Goal()
     goal.task = "navigation/spin"
     goal.source = "Nav2_example"
@@ -45,6 +48,7 @@ def start_spin_task(execute_task_client):
 
 
 def start_nav2_mission(execute_task_client):
+    """ Starts a mission that navigates to 4 different poses and spins the robot in between them. """
     mission_goal = Mission.Goal(
             subtasks=[
                 SubtaskGoal(task="navigation/navigate_to_pose", data=get_navigation_goal_in_json(x=0.55, y=-0.55)),
@@ -63,7 +67,6 @@ def start_nav2_mission(execute_task_client):
     goal.source = "Nav2_example"
     goal.task_data = json.dumps(extract_values(mission_goal))
 
-    print("Starting a Mission.")
     execute_task_client.send_goal_async(goal)
 
 

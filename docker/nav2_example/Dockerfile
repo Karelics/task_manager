@@ -19,13 +19,14 @@ RUN apt-get update && \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Source ROS and the new workspace automatically when new terminal is opened
-RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
-
 # Fix autocompletion
 RUN echo 'eval "$(register-python-argcomplete3 colcon)"' >> /opt/ros/${ROS_DISTRO}/setup.sh
 
-# Source the new workspace in the main terminal
+# Source ROS workspace automatically when new terminal is opened
+RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
+
+
+# Source ROS in the main terminal
 ENTRYPOINT ["/ros_entrypoint.sh"]
 
 CMD ["bash"]
