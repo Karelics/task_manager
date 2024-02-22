@@ -131,12 +131,12 @@ docker compose up
 Verify that everything works correctly by running tests in a separate terminal:
 ```
 docker exec -it task_manager bash
-python3 -m pytest workspaces/ros2_ws/src/task_manager/test/
+python3 -m pytest /ros2_ws/src/task_manager/test/
 ```
 
 Create a new parameter file declaring your tasks, and you are ready to launch the Task Manager:
 ```
-ros2 launch task_manager task_manager.launch.py params_file:=/workspaces/ros2_ws/src/task_manager/params/task_manager_example.yaml
+ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_manager/params/task_manager_example.yaml
 ```
 
 

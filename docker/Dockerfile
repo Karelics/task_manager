@@ -7,9 +7,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
 
 # Setup workspace and some handy env variables
-ENV ROS2_WS=/workspaces/ros2_ws
+ENV ROS2_WS=/ros2_ws
 RUN mkdir -p ${ROS2_WS}/src
-ENV ROS_LOG_DIR=/workspaces/logs
+ENV ROS_LOG_DIR=/logs
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Install dependencies
