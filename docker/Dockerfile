@@ -19,11 +19,10 @@ RUN apt-get update && \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install task_manager_msgs
-RUN cd ${ROS2_WS}/src && git clone https://github.com/Karelics/task_manager_msgs
-
 # Build Task Manager in the newly created workspace
-COPY . ${ROS2_WS}/src/task_manager
+COPY ./task_manager ${ROS2_WS}/src/task_manager
+COPY ./task_manager_msgs ${ROS2_WS}/src/task_manager_msgs
+
 RUN cd ${ROS2_WS} && \
     apt-get update && \
     . /opt/ros/${ROS_DISTRO}/setup.bash && \

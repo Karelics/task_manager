@@ -13,20 +13,18 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  ------------------------------------------------------------------
-
+import json
 import unittest
-
-# ROS
-from rclpy.action import ActionClient
 
 # Thirdparty
 from task_manager_test_utils import TaskManagerTestNode
+from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
 # ROS messages
 from action_msgs.msg import GoalStatus
 
 # Karelics messages
-from task_manager_msgs.action import Mission as MissionAction
+from task_manager_msgs.action import Mission, ExecuteTask
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 
@@ -35,32 +33,38 @@ class MissionTests(TaskManagerTestNode):
 
     def test_start_mission_task_success(self):
         """Integration test for successful flow of the mission task."""
-        goal = MissionAction.Goal(
+        mission_goal = Mission.Goal(
             subtasks=[
                 SubtaskGoal(task="fibonacci", data='{"order": 0}'),
                 SubtaskGoal(task="add_two_ints", data='{"a": 0, "b": 0}'),
             ]
         )
-        mission_client = ActionClient(self.task_manager_node, MissionAction, "/test/task/system/mission")
-        mission_client.wait_for_server(5)
-        result = mission_client.send_goal(goal)
 
-        self.assertEqual(result.status, GoalStatus.STATUS_SUCCEEDED)
-        self.assertEqual(result.result.mission_results[0].status, TaskStatus.DONE)
-        self.assertEqual(result.result.mission_results[1].status, TaskStatus.DONE)
+        goal = ExecuteTask.Goal()
+        goal.task = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        response = self.execute_task_client.send_goal(goal)
+        self.assertEqual(response.status, GoalStatus.STATUS_SUCCEEDED)
+
+        mission_result = populate_instance(json.loads(response.result.result), Mission.Result())
+        self.assertEqual(mission_result.mission_results[0].status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[1].status, TaskStatus.DONE)
 
     def test_start_mission_task_cancelled_on_new_blocking_task(self):
         """Checks that a new blocking task cancels the whole mission."""
-        goal = MissionAction.Goal(
+        mission_goal = Mission.Goal(
             subtasks=[
                 SubtaskGoal(task="fibonacci_blocking", data='{"order": 5}', task_id="123"),
                 SubtaskGoal(task="fibonacci_blocking_2", data='{"order": 1}'),
             ]
         )
 
-        mission_client = ActionClient(self.task_manager_node, MissionAction, "/test/task/system/mission")
-        mission_client.wait_for_server(5)
-        future = mission_client.send_goal_async(goal)
+        goal = ExecuteTask.Goal()
+        goal.task = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
         mission_goal_handle = self._get_response(future, timeout=5)
 
         # In the future, we need to have a way to abort the whole mission when we get a new blocking task, instead of
@@ -70,12 +74,14 @@ class MissionTests(TaskManagerTestNode):
 
         fib_goal_handle = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=0)
 
-        mission_result = mission_goal_handle.get_result()
+        mission_response = mission_goal_handle.get_result()
         fibonacci_result = fib_goal_handle.get_result()
 
-        self.assertEqual(mission_result.status, GoalStatus.STATUS_ABORTED)
-        self.assertEqual(mission_result.result.mission_results[0].status, TaskStatus.CANCELED)
-        self.assertEqual(mission_result.result.mission_results[1].status, TaskStatus.RECEIVED)
+        mission_result = populate_instance(json.loads(mission_response.result.result), Mission.Result())
+
+        self.assertEqual(mission_response.status, GoalStatus.STATUS_ABORTED)
+        self.assertEqual(mission_result.mission_results[0].status, TaskStatus.CANCELED)
+        self.assertEqual(mission_result.mission_results[1].status, TaskStatus.RECEIVED)
         self.assertEqual(fibonacci_result.status, GoalStatus.STATUS_SUCCEEDED)
 
 
