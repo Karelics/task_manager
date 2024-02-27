@@ -150,7 +150,7 @@ class TaskManagerTestNode(unittest.TestCase):
     def execute_stop_task(self):
         """Calls system/stop."""
         task_data = json.dumps(extract_values(StopTasks.Request()))
-        goal = ExecuteTask.Goal(task="system/stop", task_data=task_data, source="")
+        goal = ExecuteTask.Goal(task_name="system/stop", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
@@ -159,7 +159,7 @@ class TaskManagerTestNode(unittest.TestCase):
         cancel_goal = CancelTasks.Request()
         cancel_goal.cancelled_tasks = task_ids
         task_data = json.dumps(extract_values(cancel_goal))
-        goal = ExecuteTask.Goal(task="system/cancel_task", task_data=task_data, source="")
+        goal = ExecuteTask.Goal(task_name="system/cancel_task", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
@@ -246,7 +246,7 @@ def create_fibonacci_task_goal(
 
     goal_dict = json.dumps(extract_values(goal))
 
-    return ExecuteTask.Goal(task_id=task_id, task=task_name, task_data=goal_dict, source="CLOUD")
+    return ExecuteTask.Goal(task_id=task_id, task_name=task_name, task_data=goal_dict, source="CLOUD")
 
 
 def create_add_two_ints_task_goal(
@@ -264,4 +264,4 @@ def create_add_two_ints_task_goal(
 
     add_two_ints_goal = json.dumps(extract_values(request))
 
-    return ExecuteTask.Goal(task_id=task_id, task=task_name, task_data=add_two_ints_goal, source="CLOUD")
+    return ExecuteTask.Goal(task_id=task_id, task_name=task_name, task_data=add_two_ints_goal, source="CLOUD")

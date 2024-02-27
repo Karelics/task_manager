@@ -20,7 +20,7 @@ class TaskSender(Node):
     def start_task(self):
         """ Sends Stop task request to Task Manager"""
         goal = ExecuteTask.Goal()
-        goal.task = "system/stop"
+        goal.task_name = "system/stop"
         goal.source = "Task Sender"
         goal.task_data = json.dumps(extract_values(StopTasks.Request()))
         print("Sending stop -task from TaskSender node")
@@ -37,8 +37,8 @@ class TaskSender(Node):
         """ Called when Task finishes """
         response: ExecuteTask.Result = future.result()
         task_id = response.result.task_id
-        task_status = response.result.status
-        task_result = json.loads(response.result.result)
+        task_status = response.result.task_status
+        task_result = json.loads(response.result.task_result)
         # task_result = populate_instance(task_result, StopTasks.Response())  # Converts back to ROS interface if needed
         print(f"Task finished with status {task_status}")
         print(f"Task ID: {task_id}")

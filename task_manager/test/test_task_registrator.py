@@ -57,13 +57,13 @@ class TestTaskRegistrator(unittest.TestCase):
 
     def test_task_start_happy_flow(self):
         """Happy flow of starting a new task."""
-        request = ExecuteTask.Goal(task_id="123", task="fibonacci", task_data='{"order": 5}', source="")
+        request = ExecuteTask.Goal(task_id="123", task_name="fibonacci", task_data='{"order": 5}', source="")
         task_client = self.task_registrator.start_new_task(request, self.task_specs)
         self.assertIn(task_client, self.active_tasks.get_active_tasks())
 
     def test_start_new_task_duplicate_task_id(self) -> None:
         """Starting a new task with already existing task_id raises an exception."""
-        start_task_request = ExecuteTask.Goal(task_id="123", task="fibonacci", source="", task_data='{"order": 5}')
+        start_task_request = ExecuteTask.Goal(task_id="123", task_name="fibonacci", source="", task_data='{"order": 5}')
         self.task_registrator.start_new_task(start_task_request, self.task_specs)
 
         with self.assertRaises(DuplicateTaskIdException):

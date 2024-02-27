@@ -53,8 +53,8 @@ class TestTaskManager(TaskManagerTestNode):
 
         expected_result = ExecuteTask.Result(
             task_id="123",
-            status=TaskStatus.DONE,
-            result='{"sum": 0}',
+            task_status=TaskStatus.DONE,
+            task_result='{"sum": 0}',
         )
 
         self.assertEqual(result.result, expected_result)
@@ -67,8 +67,8 @@ class TestTaskManager(TaskManagerTestNode):
         response = goal_handle.get_result()
 
         self.assertEqual(response.status, GoalStatus.STATUS_CANCELED)
-        self.assertEqual(response.result.result, '{"sequence": []}')
-        self.assertEqual(response.result.status, TaskStatus.CANCELED)
+        self.assertEqual(response.result.task_result, '{"sequence": []}')
+        self.assertEqual(response.result.task_status, TaskStatus.CANCELED)
 
     def test_execute_task_cancel_failure(self):
         """Task execution is cancelled by the Action Client in the middle of the task, but the cancelling fails."""
@@ -78,8 +78,8 @@ class TestTaskManager(TaskManagerTestNode):
             response = goal_handle.get_result()
 
         self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
-        self.assertEqual(response.result.result, "")
-        self.assertEqual(response.result.status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(response.result.task_result, "")
+        self.assertEqual(response.result.task_status, TaskStatus.IN_PROGRESS)
         self.assertEqual(response.result.error_code, response.result.ERROR_TASK_CANCEL_FAILED)
 
         # Properly cancel the goal by starting a new blocking task, to avoid printing a bunch of error logs
@@ -99,8 +99,8 @@ class TestTaskManager(TaskManagerTestNode):
         response = goal_handle.get_result()
 
         self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
-        self.assertEqual(response.result.result, '{"sequence": []}')
-        self.assertEqual(response.result.status, TaskStatus.CANCELED)
+        self.assertEqual(response.result.task_result, '{"sequence": []}')
+        self.assertEqual(response.result.task_status, TaskStatus.CANCELED)
 
     def execute_task_error_on_launch(self):
         """If the task errors during the validation steps before it even launches, make sure that the action result
@@ -113,11 +113,16 @@ class TestTaskManager(TaskManagerTestNode):
             goal_handle = self._start_task(goal)
             response = goal_handle.get_result()
 
-            expected_result = ExecuteTask.Result(task_id="123", result="{}", status="ERROR", error_code="error")
+            expected_result = ExecuteTask.Result(
+                task_id="123", task_result="{}", task_status="ERROR", error_code="error"
+            )
+
             self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
             self.assertEqual(response.result, expected_result)
             mock_publish.assert_called_with(
-                TaskDoneResult(task_id="123", task="fibonacci", status="ERROR", source="CLOUD", result="{}")
+                TaskDoneResult(
+                    task_id="123", task_name="fibonacci", task_status="ERROR", source="CLOUD", task_result="{}"
+                )
             )
 
     #########################
@@ -128,11 +133,11 @@ class TestTaskManager(TaskManagerTestNode):
         """Test registering two tasks with the same id but at different times (allowed)."""
         goal_handle = self.start_add_two_ints_service_task()
         task_result_1 = goal_handle.get_result()
-        self.assertEqual(task_result_1.result.status, TaskStatus.DONE)
+        self.assertEqual(task_result_1.result.task_status, TaskStatus.DONE)
 
         goal_handle_2 = self.start_add_two_ints_service_task()
         task_result_2 = goal_handle_2.get_result()
-        self.assertEqual(task_result_2.result.status, TaskStatus.DONE)
+        self.assertEqual(task_result_2.result.task_status, TaskStatus.DONE)
 
     def test_same_task_id_concurrently(self) -> None:
         """Test registering two tasks with the same id at the same time (prohibited)."""
@@ -141,8 +146,8 @@ class TestTaskManager(TaskManagerTestNode):
         response_1 = goal_handle.get_result()
         response_2 = goal_handle_2.get_result()
 
-        self.assertEqual(response_1.result.status, TaskStatus.DONE)
-        self.assertEqual(response_2.result.status, TaskStatus.ERROR)
+        self.assertEqual(response_1.result.task_status, TaskStatus.DONE)
+        self.assertEqual(response_2.result.task_status, TaskStatus.ERROR)
         self.assertEqual(response_2.result.error_code, response_2.result.ERROR_DUPLICATE_TASK_ID)
 
     def test_task_start_user_inputs(self) -> None:
@@ -151,14 +156,14 @@ class TestTaskManager(TaskManagerTestNode):
             goal_handle = self.start_add_two_ints_service_task(task_name="non-existing")
             response = goal_handle.get_result()
 
-            self.assertEqual(response.result.status, TaskStatus.ERROR)
+            self.assertEqual(response.result.task_status, TaskStatus.ERROR)
             self.assertEqual(response.result.error_code, response.result.ERROR_UNKNOWN_TASK)
 
         with self.subTest("Empty task name"):
             goal_handle = self.start_add_two_ints_service_task(task_name="")
             response = goal_handle.get_result()
 
-            self.assertEqual(response.result.status, TaskStatus.ERROR)
+            self.assertEqual(response.result.task_status, TaskStatus.ERROR)
             self.assertEqual(response.result.error_code, response.result.ERROR_UNKNOWN_TASK)
 
         with self.subTest("Invalid task type"):
@@ -166,29 +171,29 @@ class TestTaskManager(TaskManagerTestNode):
             goal_handle = self.start_add_two_ints_service_task(request=request)
             response = goal_handle.get_result()
 
-            self.assertEqual(response.result.status, TaskStatus.ERROR)
+            self.assertEqual(response.result.task_status, TaskStatus.ERROR)
             self.assertEqual(response.result.error_code, response.result.ERROR_TASK_DATA_PARSING_FAILED)
 
         with self.subTest("Invalid JSON"):
-            goal = ExecuteTask.Goal(task_id="123", task="add_two_ints", task_data="{{}", source="")
+            goal = ExecuteTask.Goal(task_id="123", task_name="add_two_ints", task_data="{{}", source="")
             goal_handle = self._start_task(goal)
             response = goal_handle.get_result()
 
-            self.assertEqual(response.result.status, TaskStatus.ERROR)
+            self.assertEqual(response.result.task_status, TaskStatus.ERROR)
             self.assertEqual(response.result.error_code, response.result.ERROR_TASK_DATA_PARSING_FAILED)
 
         with self.subTest("Empty task_id"):
             goal_handle = self.start_add_two_ints_service_task(task_id="")
             response = goal_handle.get_result()
             self.assertTrue(response.result.task_id != "")
-            self.assertEqual(response.result.status, TaskStatus.DONE)
+            self.assertEqual(response.result.task_status, TaskStatus.DONE)
 
     @patch("task_manager.task_registrator.ServiceTaskClient.start_task_async", side_effect=TaskStartError)
     def test_start_task_fails(self, _mock):
         """When starting of the task fails, error code is correctly added to response."""
         goal_handle = self.start_add_two_ints_service_task(task_id="")
         response = goal_handle.get_result()
-        self.assertEqual(response.result.status, TaskStatus.ERROR)
+        self.assertEqual(response.result.task_status, TaskStatus.ERROR)
         self.assertEqual(response.result.error_code, response.result.ERROR_TASK_START_ERROR)
 
     def test_blocking_task(self) -> None:
@@ -203,8 +208,8 @@ class TestTaskManager(TaskManagerTestNode):
         response_1 = goal_handle.get_result()
         response_2 = goal_handle_2.get_result()
 
-        self.assertEqual(response_1.result.status, TaskStatus.CANCELED)
-        self.assertEqual(response_2.result.status, TaskStatus.DONE)
+        self.assertEqual(response_1.result.task_status, TaskStatus.CANCELED)
+        self.assertEqual(response_2.result.task_status, TaskStatus.DONE)
 
     def test_two_non_blocking_tasks(self) -> None:
         """Test registering 2 non-blocking tasks."""
@@ -212,8 +217,8 @@ class TestTaskManager(TaskManagerTestNode):
         goal_handle_2 = self.start_fibonacci_action_task("fibonacci_2", run_time_secs=1)
         result = goal_handle.get_result()
         result_2 = goal_handle_2.get_result()
-        self.assertEqual(result.result.status, TaskStatus.DONE)
-        self.assertEqual(result_2.result.status, TaskStatus.DONE)
+        self.assertEqual(result.result.task_status, TaskStatus.DONE)
+        self.assertEqual(result_2.result.task_status, TaskStatus.DONE)
 
     def test_blocking_task_cancelling_fails(self) -> None:
         """Sometimes blocking task cancelling might fail, for example if we try to cancel a service that executes for
@@ -228,8 +233,8 @@ class TestTaskManager(TaskManagerTestNode):
         result_1 = goal_handle_1.get_result()
         result_2 = goal_handle_2.get_result()
 
-        self.assertEqual(result_1.result.status, TaskStatus.DONE)
-        self.assertEqual(result_2.result.status, TaskStatus.ERROR)
+        self.assertEqual(result_1.result.task_status, TaskStatus.DONE)
+        self.assertEqual(result_2.result.task_status, TaskStatus.ERROR)
         self.assertEqual(result_2.result.error_code, result_2.result.ERROR_TASK_START_ERROR)
 
     def test_same_task_twice(self) -> None:
@@ -240,10 +245,10 @@ class TestTaskManager(TaskManagerTestNode):
             goal_handle_2 = self.start_fibonacci_action_task("fibonacci", run_time_secs=0)
 
             result = goal_handle.get_result()
-            self.assertEqual(result.result.status, TaskStatus.CANCELED)
+            self.assertEqual(result.result.task_status, TaskStatus.CANCELED)
 
             result_2 = goal_handle_2.get_result()
-            self.assertEqual(result_2.result.status, TaskStatus.DONE)
+            self.assertEqual(result_2.result.task_status, TaskStatus.DONE)
 
         with self.subTest("Service Task, the second tasks waits for a while to see if the previous one finishes"):
             goal_handle_1 = self.start_add_two_ints_service_task(run_time_secs=1, task_id="5")
@@ -258,8 +263,8 @@ class TestTaskManager(TaskManagerTestNode):
             response_1 = goal_handle_1.get_result()
             response_2 = goal_handle_2.get_result()
 
-            self.assertEqual(response_1.result.status, TaskStatus.DONE)
-            self.assertEqual(response_2.result.status, TaskStatus.DONE)
+            self.assertEqual(response_1.result.task_status, TaskStatus.DONE)
+            self.assertEqual(response_2.result.task_status, TaskStatus.DONE)
 
     def test_two_parallel_tasks(self) -> None:
         """Test cases for task's reentrant behavior.
@@ -295,8 +300,8 @@ class TestTaskManager(TaskManagerTestNode):
                 response_1 = goal_handle_1.get_result()
                 response_2 = goal_handle_2.get_result()
 
-                self.assertEqual(response_1.result.status, TaskStatus.DONE)
-                self.assertEqual(response_2.result.status, TaskStatus.DONE)
+                self.assertEqual(response_1.result.task_status, TaskStatus.DONE)
+                self.assertEqual(response_2.result.task_status, TaskStatus.DONE)
 
     def test_register_multiple_blocking_tasks(self) -> None:
         """Tests that task registration correctly handles previous blocking task cancelling when new blocking task is
@@ -333,8 +338,8 @@ class TestTaskManager(TaskManagerTestNode):
             # Execution order of these tasks is not guaranteed, so the end result might be DONE or CANCELED
             result_1 = goal_handle_1.get_result()
             result_2 = goal_handle_2.get_result()
-            self.assertIn(result_1.result.status, [TaskStatus.DONE, TaskStatus.CANCELED])
-            self.assertIn(result_2.result.status, [TaskStatus.DONE, TaskStatus.CANCELED])
+            self.assertIn(result_1.result.task_status, [TaskStatus.DONE, TaskStatus.CANCELED])
+            self.assertIn(result_2.result.task_status, [TaskStatus.DONE, TaskStatus.CANCELED])
 
     def test_active_tasks_publishing(self):
         """Tests that for a single task execution, active tasks will publish:
@@ -359,14 +364,14 @@ class TestTaskManager(TaskManagerTestNode):
             active_tasks=[
                 ActiveTask(
                     task_id="1",
-                    task="fibonacci",
-                    status=str(TaskStatus.IN_PROGRESS),
+                    task_name="fibonacci",
+                    task_status=str(TaskStatus.IN_PROGRESS),
                     source="CLOUD",
                 )
             ]
         )
         expected_call_2 = deepcopy(expected_call_1)
-        expected_call_2.active_tasks[0].status = str(TaskStatus.DONE)
+        expected_call_2.active_tasks[0].task_status = str(TaskStatus.DONE)
 
         # Wait just a bit so that the active tasks sub also gets the final messages
         _wait_for_calls(
@@ -381,7 +386,7 @@ class TestTaskManager(TaskManagerTestNode):
         goal_handle = self.start_fibonacci_action_task("fibonacci", run_time_secs=1)
         goal_handle.cancel_goal()
         response = goal_handle.get_result()
-        self.assertEqual(response.result.status, TaskStatus.DONE)
+        self.assertEqual(response.result.task_status, TaskStatus.DONE)
 
     def test_call_tasks_action_server(self):
         """Test calling the direct action server that a task exposes."""

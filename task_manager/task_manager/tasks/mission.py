@@ -67,26 +67,26 @@ class Mission:
                 subtask.task_id = str(uuid.uuid4())
             result.mission_results.append(
                 SubtaskResult(
-                    task=subtask.task,
+                    task_name=subtask.task_name,
                     task_id=subtask.task_id,
-                    status=TaskStatus.RECEIVED,
+                    task_status=TaskStatus.RECEIVED,
                 )
             )
 
         for subtask, mission_result in zip(request.subtasks, result.mission_results):
             goal = ExecuteTask.Goal(
-                task_id=subtask.task_id, task=subtask.task, task_data=subtask.data, source="Mission"
+                task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
             )
             subtask_result = self.execute_task_cb(goal, goal_handle)
-            mission_result.status = subtask_result.status
+            mission_result.task_status = subtask_result.task_status
             mission_result.skipped = False
 
-            if subtask_result.status != TaskStatus.DONE:
+            if subtask_result.task_status != TaskStatus.DONE:
                 if subtask.allow_skipping:
                     mission_result.skipped = True
                     continue
 
-                if subtask_result.status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
+                if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
                     # Need to also check if the cancel was requested. If the goal was cancelled
                     # through a system task, we cannot set the status to be cancelled and must abort instead.
                     goal_handle.canceled()

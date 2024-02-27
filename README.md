@@ -39,11 +39,11 @@ For each task request, there are two useful fields:
 
 To start a task, send a goal to the action server `/task_manager/execute_task`. For example
 ```
-ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task: system/cancel_task, source: CLI, task_data: "{\"cancelled_tasks\": [\"example_task_id\"]}"}'
+ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task_name: system/cancel_task, source: CLI, task_data: "{\"cancelled_tasks\": [\"example_task_id\"]}"}'
 ```
 Note that the `task_data` is the json-formatted version of the action or service message interface.
 
-Tasks provide their end status with the `status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskStatus.msg) enumeration.
+Tasks provide their end status with the `task_status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskStatus.msg) enumeration.
 
 ### Active tasks list <a name="active-tasks"></a>
 It is possible to track all the currently active tasks that have their status as `IN_PROGRESS` by subscribing to `/task_manager/active_tasks` topic. The task's end status is also published to this topic just before the task is removed from the list.

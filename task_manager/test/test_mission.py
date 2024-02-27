@@ -43,14 +43,14 @@ class MissionUnittest(unittest.TestCase):
     def test_execute_cb(self, _mock_generate_random_uuid):
         """Test successful flow of launching the mission."""
         request = MissionAction.Goal()
-        request.subtasks = [SubtaskGoal(task="test/mock_subtask", data="{}")]
-        self.mission.execute_task_cb.return_value = ExecuteTask.Result(status=TaskStatus.DONE, result="{}")
+        request.subtasks = [SubtaskGoal(task_name="test/mock_subtask", task_data="{}")]
+        self.mission.execute_task_cb.return_value = ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
 
         with self.subTest("Successful flow"):
             request.subtasks[0].task_id = "111"
             expected_result = MissionAction.Result()
             expected_result.mission_results = [
-                SubtaskResult(task="test/mock_subtask", status=TaskStatus.DONE, task_id="111")
+                SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.DONE, task_id="111")
             ]
 
             result = self.mission.execute_cb(goal_handle=Mock(request=request))
@@ -64,32 +64,38 @@ class MissionUnittest(unittest.TestCase):
     def test_mission_not_successful(self):
         """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
         Mission is cancelled."""
-        request = MissionAction.Goal(subtasks=[SubtaskGoal(task="test/mock_subtask", data="{}")])
+        request = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="test/mock_subtask", task_data="{}")])
         mock_goal_handle = Mock(request=request)
 
         with self.subTest("canceled"):
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(status=TaskStatus.CANCELED, result="{}")
+            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
+                task_status=TaskStatus.CANCELED, task_result="{}"
+            )
             result = self.mission.execute_cb(goal_handle=mock_goal_handle)
             mock_goal_handle.canceled.assert_called_once()
-            self.assertEqual(result.mission_results[0].status, TaskStatus.CANCELED)
+            self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
 
         mock_goal_handle.reset_mock()
         with self.subTest("error"):
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(status=TaskStatus.ERROR, result="{}")
+            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
+                task_status=TaskStatus.ERROR, task_result="{}"
+            )
             result = self.mission.execute_cb(goal_handle=mock_goal_handle)
             mock_goal_handle.abort.assert_called_once()
-            self.assertEqual(result.mission_results[0].status, TaskStatus.ERROR)
+            self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
 
     def test_skipping_subtask(self):
         """Tests that even tho a subtask is aborted, no error is raised when the task is allowed to be skipped."""
         request = MissionAction.Goal()
-        request.subtasks = [SubtaskGoal(task="test/mock_subtask", data="{}", allow_skipping=True, task_id="123")]
+        request.subtasks = [
+            SubtaskGoal(task_name="test/mock_subtask", task_data="{}", allow_skipping=True, task_id="123")
+        ]
 
-        self.mission.execute_task_cb.return_value = ExecuteTask.Result(status=TaskStatus.ERROR, result="{}")
+        self.mission.execute_task_cb.return_value = ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}")
 
         expected_result = MissionAction.Result()
         expected_result.mission_results = [
-            SubtaskResult(task="test/mock_subtask", status=TaskStatus.ERROR, skipped=True, task_id="123")
+            SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.ERROR, skipped=True, task_id="123")
         ]
 
         result = self.mission.execute_cb(goal_handle=Mock(request=request))

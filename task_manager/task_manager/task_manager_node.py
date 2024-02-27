@@ -166,9 +166,9 @@ class TaskManager(Node):
         request = goal_handle.request
         response = self.execute_task(request, goal_handle)
 
-        if response.status == TaskStatus.DONE:
+        if response.task_status == TaskStatus.DONE:
             goal_handle.succeed()
-        elif response.status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
+        elif response.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
             # Need to also check if the cancel was requested. If the goal was cancelled
             # through a system task, we cannot set the status to be cancelled and must abort instead.
             goal_handle.canceled()
@@ -191,28 +191,28 @@ class TaskManager(Node):
             task_client, error_code = self._start_task(request)
 
         if error_code:
-            response.status = TaskStatus.ERROR
+            response.task_status = TaskStatus.ERROR
             response.error_code = error_code
-            response.result = json.dumps({})
+            response.task_result = json.dumps({})
 
             # Normally the done result is published automatically when task_client has finished. Now we are not
             # creating the task_client at all, since the task has failed while trying to start it.
             self.results_pub.publish(
                 TaskDoneResult(
                     task_id=request.task_id,
-                    task=request.task,
-                    status=response.status,
+                    task_name=request.task_name,
+                    task_status=response.task_status,
                     source=request.source,
-                    result=response.result,
+                    task_result=response.task_result,
                 )
             )
             return response
 
         try:
-            response.status, response.result = self._wait_for_task_finish(task_client, goal_handle)
+            response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
         except CancelTaskFailedError as e:
-            self.get_logger().error(f"Failed to cancel a task {request.task}: {str(e)}")
-            response.status = TaskStatus.IN_PROGRESS
+            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {str(e)}")
+            response.task_status = TaskStatus.IN_PROGRESS
             response.error_code = response.ERROR_TASK_CANCEL_FAILED
 
         return response
@@ -225,15 +225,15 @@ class TaskManager(Node):
         task_client = None
         error_code = None
 
-        if request.task not in self.known_tasks:
+        if request.task_name not in self.known_tasks:
             self.get_logger().error(
-                f"Unknown task: '{request.task}'. All the tasks needs to be declared using parameters"
+                f"Unknown task: '{request.task_name}'. All the tasks needs to be declared using parameters"
             )
             return None, ExecuteTask.Result().ERROR_UNKNOWN_TASK
 
-        self.get_logger().info(f"Got a task request from '{request.source}' to start a task '{request.task}'.")
+        self.get_logger().info(f"Got a task request from '{request.source}' to start a task '{request.task_name}'.")
         try:
-            task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task])
+            task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task_name])
         except DuplicateTaskIdException as error_msg:
             self.get_logger().error(str(error_msg))
             error_code = ExecuteTask.Result().ERROR_DUPLICATE_TASK_ID
@@ -265,8 +265,8 @@ class TaskManager(Node):
         for task_client in active_tasks.values():
             task_msg = ActiveTask()
             task_msg.task_id = task_client.task_details.task_id
-            task_msg.task = task_client.task_specs.task_name
-            task_msg.status = str(task_client.task_details.status)
+            task_msg.task_name = task_client.task_specs.task_name
+            task_msg.task_status = str(task_client.task_details.status)
             task_msg.source = task_client.task_details.source
             task_messages.append(task_msg)
         msg = ActiveTaskArray(active_tasks=task_messages)
@@ -275,10 +275,10 @@ class TaskManager(Node):
     def _task_done_cb(self, task_specs: TaskSpecs, task_details: TaskDetails):
         result_msg = TaskDoneResult(
             task_id=task_details.task_id,
-            task=task_specs.task_name,
-            status=task_details.status,
+            task_name=task_specs.task_name,
+            task_status=task_details.status,
             source=task_details.source,
-            result=json.dumps(extract_values(task_details.result)),
+            task_result=json.dumps(extract_values(task_details.result)),
         )
         self.results_pub.publish(result_msg)
         self.get_logger().info(f"Task {task_specs.task_name} completed with status {task_details.status}")

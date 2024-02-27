@@ -35,33 +35,33 @@ class MissionTests(TaskManagerTestNode):
         """Integration test for successful flow of the mission task."""
         mission_goal = Mission.Goal(
             subtasks=[
-                SubtaskGoal(task="fibonacci", data='{"order": 0}'),
-                SubtaskGoal(task="add_two_ints", data='{"a": 0, "b": 0}'),
+                SubtaskGoal(task_name="fibonacci", task_data='{"order": 0}'),
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 0}'),
             ]
         )
 
         goal = ExecuteTask.Goal()
-        goal.task = "system/mission"
+        goal.task_name = "system/mission"
         goal.task_data = json.dumps(extract_values(mission_goal))
 
         response = self.execute_task_client.send_goal(goal)
         self.assertEqual(response.status, GoalStatus.STATUS_SUCCEEDED)
 
-        mission_result = populate_instance(json.loads(response.result.result), Mission.Result())
-        self.assertEqual(mission_result.mission_results[0].status, TaskStatus.DONE)
-        self.assertEqual(mission_result.mission_results[1].status, TaskStatus.DONE)
+        mission_result = populate_instance(json.loads(response.result.task_result), Mission.Result())
+        self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
 
     def test_start_mission_task_cancelled_on_new_blocking_task(self):
         """Checks that a new blocking task cancels the whole mission."""
         mission_goal = Mission.Goal(
             subtasks=[
-                SubtaskGoal(task="fibonacci_blocking", data='{"order": 5}', task_id="123"),
-                SubtaskGoal(task="fibonacci_blocking_2", data='{"order": 1}'),
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 5}', task_id="123"),
+                SubtaskGoal(task_name="fibonacci_blocking_2", task_data='{"order": 1}'),
             ]
         )
 
         goal = ExecuteTask.Goal()
-        goal.task = "system/mission"
+        goal.task_name = "system/mission"
         goal.task_data = json.dumps(extract_values(mission_goal))
 
         future = self.execute_task_client.send_goal_async(goal)
@@ -77,11 +77,11 @@ class MissionTests(TaskManagerTestNode):
         mission_response = mission_goal_handle.get_result()
         fibonacci_result = fib_goal_handle.get_result()
 
-        mission_result = populate_instance(json.loads(mission_response.result.result), Mission.Result())
+        mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
 
         self.assertEqual(mission_response.status, GoalStatus.STATUS_ABORTED)
-        self.assertEqual(mission_result.mission_results[0].status, TaskStatus.CANCELED)
-        self.assertEqual(mission_result.mission_results[1].status, TaskStatus.RECEIVED)
+        self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.CANCELED)
+        self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.RECEIVED)
         self.assertEqual(fibonacci_result.status, GoalStatus.STATUS_SUCCEEDED)
 
 
