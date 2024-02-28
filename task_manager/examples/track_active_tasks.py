@@ -27,18 +27,18 @@ class TaskTracker(Node):
     def _active_tasks_callback(self, data: ActiveTaskArray):
         """ Called every time the active tasks list changes """
         for active_task in data.active_tasks:
-            if active_task.status == TaskStatus.IN_PROGRESS and active_task.task_id not in self.active_tasks:
+            if active_task.task_status == TaskStatus.IN_PROGRESS and active_task.task_id not in self.active_tasks:
                 self.active_tasks[active_task.task_id] = active_task
-                print(f"Task {active_task.task} ({active_task.task_id}) is in progress.")
+                print(f"Task {active_task.task_name} ({active_task.task_id}) is in progress.")
 
-            elif active_task.status in [TaskStatus.DONE, TaskStatus.ERROR, TaskStatus.CANCELED]:
+            elif active_task.task_status in [TaskStatus.DONE, TaskStatus.ERROR, TaskStatus.CANCELED]:
                 del self.active_tasks[active_task.task_id]
-                if active_task.status == TaskStatus.DONE:
-                    print(f"Task {active_task.task} ({active_task.task_id}) finished successfully!")
-                elif active_task.status == TaskStatus.ERROR:
-                    print(f"Task  {active_task.task} ({active_task.task_id}) failed!")
-                elif active_task.status == TaskStatus.CANCELED:
-                    print(f"Task  {active_task.task} ({active_task.task_id}) was canceled!")
+                if active_task.task_status == TaskStatus.DONE:
+                    print(f"Task {active_task.task_name} ({active_task.task_id}) finished successfully!")
+                elif active_task.task_status == TaskStatus.ERROR:
+                    print(f"Task  {active_task.task_name} ({active_task.task_id}) failed!")
+                elif active_task.task_status == TaskStatus.CANCELED:
+                    print(f"Task  {active_task.task_name} ({active_task.task_id}) was canceled!")
 
 
 if __name__ == "__main__":

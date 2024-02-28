@@ -39,11 +39,11 @@ For each task request, there are two useful fields:
 
 To start a task, send a goal to the action server `/task_manager/execute_task`. For example
 ```
-ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task: system/cancel_task, source: CLI, task_data: "{\"cancelled_tasks\": [\"example_task_id\"]}"}'
+ros2 action send_goal /task_manager/execute_task task_manager_msgs/action/ExecuteTask '{task_name: system/cancel_task, source: CLI, task_data: "{\"cancelled_tasks\": [\"example_task_id\"]}"}'
 ```
 Note that the `task_data` is the json-formatted version of the action or service message interface.
 
-Tasks provide their end status with the `status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskStatus.msg) enumeration.
+Tasks provide their end status with the `task_status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/msg/TaskStatus.msg) enumeration.
 
 ### Active tasks list <a name="active-tasks"></a>
 It is possible to track all the currently active tasks that have their status as `IN_PROGRESS` by subscribing to `/task_manager/active_tasks` topic. The task's end status is also published to this topic just before the task is removed from the list.
@@ -82,25 +82,25 @@ Task manager provides a `system/stop` task, which can be called to stop all the 
 ## Public API
 
 ### Published topics
-| Topic                      | Description                                                                                                                                       | Message interface                                                                                  |
-|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
-| /task_manager/active_tasks | Publishes all the tasks that are currently in progress. Reports also the task's final completion status before the task is removed from the list. | [ActiveTaskArray](https://github.com/Karelics/task_manager_msgs/blob/main/msg/ActiveTaskArray.msg) |
-| /task_manager/results      | Publishes the end results of all the tasks.                                                                                                       | [TaskDoneResult](https://github.com/Karelics/task_manager_msgs/blob/main/msg/TaskDoneResult.msg)   |
+| Topic                      | Description                                                                                                                                       | Message interface                                                                                               |
+|----------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| /task_manager/active_tasks | Publishes all the tasks that are currently in progress. Reports also the task's final completion status before the task is removed from the list. | [ActiveTaskArray](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/msg/ActiveTaskArray.msg) |
+| /task_manager/results      | Publishes the end results of all the tasks.                                                                                                       | [TaskDoneResult](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/msg/TaskDoneResult.msg)   |
 
 ### Actions
 | Action topic               | Description                      | Message interface |
 |----------------------------|----------------------------------|-------------------|
-| /task_manager/execute_task | Starts any task with given data. | [ExecuteTask](https://github.com/Karelics/task_manager_msgs/blob/main/action/ExecuteTask.action)       |
+| /task_manager/execute_task | Starts any task with given data. | [ExecuteTask](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/ExecuteTask.action)       |
 
 ## Available tasks
 
 The following tasks are available by default from the Task Manager
 
-| Task name          | Description                                                                      | Message interface                                                                          |
-|--------------------|----------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| system/mission     | Starts a mission.                                                                | [Mission](https://github.com/Karelics/task_manager_msgs/blob/main/action/Mission.action)   |
-| system/cancel_task | Cancels the given tasks by Task ID.                                              | [CancelTasks](https://github.com/Karelics/task_manager_msgs/blob/main/srv/CancelTasks.srv) |
-| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`. | [StopTasks](https://github.com/Karelics/task_manager_msgs/blob/main/srv/StopTasks.srv)     |
+| Task name          | Description                                                                      | Message interface                                                                                       |
+|--------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| system/mission     | Starts a mission.                                                                | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
+| system/cancel_task | Cancels the given tasks by Task ID.                                              | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
+| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`. | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
 
 ## Parameters
 

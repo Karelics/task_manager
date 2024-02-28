@@ -1,4 +1,4 @@
 string task_id
-string task
-string status
+string task_name
+string task_status
 string source

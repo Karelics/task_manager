@@ -21,13 +21,13 @@ class MissionSender(Node):
     def start_mission(self):
         """ Sends a Mission with 2 consecutive Stop subtask requests to Task Manager"""
         goal = ExecuteTask.Goal()
-        goal.task = "system/mission"
+        goal.task_name = "system/mission"
         goal.source = "Mission Sender"
         mission_goal = Mission.Goal()
 
         stop_subtask = SubtaskGoal()
-        stop_subtask.task = "system/stop"
-        stop_subtask.data = json.dumps(extract_values(StopTasks.Request()))
+        stop_subtask.task_name = "system/stop"
+        stop_subtask.task_data = json.dumps(extract_values(StopTasks.Request()))
 
         mission_goal.subtasks.append(stop_subtask)
         mission_goal.subtasks.append(stop_subtask)
@@ -46,8 +46,8 @@ class MissionSender(Node):
         """ Called when Task finishes """
         response: ExecuteTask.Result = future.result()
         task_id = response.result.task_id
-        task_status = response.result.status
-        mission_result = populate_instance(json.loads(response.result.result), Mission.Result())
+        task_status = response.result.task_status
+        mission_result = populate_instance(json.loads(response.result.task_result), Mission.Result())
         print("---")
         print(f"Mission ID: {task_id}")
         print(f"Mission status: {task_status}")
@@ -55,8 +55,8 @@ class MissionSender(Node):
         for subtask_result in mission_result.mission_results:
             print("-")
             print(f"Subtask ID: {subtask_result.task_id}")
-            print(f"Subtask name: {subtask_result.task}")
-            print(f"Subtask status: {subtask_result.status}")
+            print(f"Subtask name: {subtask_result.task_name}")
+            print(f"Subtask status: {subtask_result.task_status}")
             print(f"Subtask skipped: {subtask_result.skipped}")
 
             # Subtask result is published to /task_manager/results

@@ -1,4 +1,4 @@
 string task_id
-string task
-string data
+string task_name
+string task_data
 bool allow_skipping

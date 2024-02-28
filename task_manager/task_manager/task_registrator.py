@@ -85,7 +85,7 @@ class TaskRegistrator:
             raise DuplicateTaskIdException(f"Task with same the task ID {request.task_id} is already running")
 
         if not task_specs.reentrant:
-            self._cancel_task_of_same_type(request.task)
+            self._cancel_task_of_same_type(request.task_name)
 
         if task_specs.blocking:
             self._cancel_active_blocking_task()
