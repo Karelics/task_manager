@@ -1,3 +1,14 @@
 task_manager:
   ros__parameters:
-    tasks: []
+    tasks: ["fibonacci"]
+
+    fibonacci:
+      task_name: fib
+      topic: /fibonacci
+      msg_interface: "example_interfaces.srv.AddTwoInts"
+      blocking: True
+
+    # Creates new service and action topics for all the declared tasks, to allow easy task calling from the CLI.
+    # Can be useful for debugging and development purposes mainly. Preferred task starting method is
+    # /task_manager/execute_task action topic, which allows user to also set Task ID and source.
+    enable_task_servers: True

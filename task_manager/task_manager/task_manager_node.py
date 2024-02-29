@@ -51,6 +51,7 @@ from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService
 from task_manager.tasks.task_action_server import TaskActionServer
+from task_manager.tasks.task_service_server import TaskServiceServer
 
 
 class TaskManager(Node):
@@ -70,6 +71,8 @@ class TaskManager(Node):
 
         results_qos = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.RELIABLE)
         self.results_pub = self.create_publisher(TaskDoneResult, "/task_manager/results", qos_profile=results_qos)
+
+        self._enable_task_servers = self.declare_parameter("enable_task_servers", False).value
 
         # Lock for starting one task at a time
         self.mutex = Lock()
@@ -123,20 +126,26 @@ class TaskManager(Node):
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
-            if task_specs.task_server_type == TaskServerType.ACTION:
-                # Create an action server for the task that can be easily called from the command line,
-                # in addition to the "execute_task" action server
-                TaskActionServer(
-                    node=self,
-                    task_specs=task_specs,
-                    task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
-                    execute_task_cb=self.execute_task,
-                )
+            if self._enable_task_servers:
+                if task_specs.task_server_type == TaskServerType.ACTION:
+                    # Create an action server for the task that can be easily called from the command line,
+                    # in addition to the "execute_task" action server
+                    TaskActionServer(
+                        node=self,
+                        task_specs=task_specs,
+                        task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
+                        execute_task_cb=self.execute_task,
+                    )
 
-            elif task_specs.task_server_type == TaskServerType.SERVICE:
-                # TODO What if we have forward slash in the task name?
-                # TODO We don't yet auto-generate new Services that could be easily called
-                pass
+                elif task_specs.task_server_type == TaskServerType.SERVICE:
+                    # TODO What if we have forward slash in the task name?
+                    # TODO We don't yet auto-generate new Services that could be easily called
+                    TaskServiceServer(
+                        node=self,
+                        task_specs=task_specs,
+                        task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
+                        execute_task_cb=self.execute_task,
+                    )
 
     def setup_system_tasks(self):
         """Create servers for system tasks."""
@@ -157,9 +166,7 @@ class TaskManager(Node):
         )
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
 
-        mission = Mission(
-            self, task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX, execute_task_cb=self.execute_task
-        )
+        mission = Mission(self, action_name="/task_manager/task/system/mission", execute_task_cb=self.execute_task)
         self.known_tasks["system/mission"] = mission.get_task_specs()
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):

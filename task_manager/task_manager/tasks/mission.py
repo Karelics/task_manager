@@ -37,20 +37,20 @@ class Mission:
     def __init__(
         self,
         node: Node,
-        task_topic_prefix: str,
+        action_name: str,
         execute_task_cb: Callable[[ExecuteTask.Goal, ServerGoalHandle], ExecuteTask.Result],
     ):
         """
         :param node: ROS Node
-        :param task_topic_prefix: Action topic prefix of the task
+        :param action_name: Action topic of the mission action server
         :param execute_task_cb: Callback to execute a single task
         """
         self.execute_task_cb = execute_task_cb
-        self._task_topic_prefix = task_topic_prefix
+        self._action_name = action_name
         ActionServer(
             node=node,
             action_type=MissionAction,
-            action_name=f"_{task_topic_prefix}/system/mission",
+            action_name=self._action_name,
             execute_callback=self.execute_cb,
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
@@ -103,7 +103,7 @@ class Mission:
             task_name="system/mission",
             blocking=False,
             cancel_on_stop=False,
-            topic=f"_{self._task_topic_prefix}/system/mission",
+            topic=self._action_name,
             cancel_reported_as_success=False,
             reentrant=False,
             msg_interface=MissionAction,

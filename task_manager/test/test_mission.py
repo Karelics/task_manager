@@ -34,7 +34,7 @@ class MissionUnittest(unittest.TestCase):
         self.patcher = mock.patch("task_manager.tasks.mission.ActionServer", return_value=Mock())
         self.patcher.start()
 
-        self.mission = Mission(node=Mock(), task_topic_prefix="", execute_task_cb=Mock())
+        self.mission = Mission(node=Mock(), action_name="", execute_task_cb=Mock())
 
     def tearDown(self):
         self.patcher.stop()
