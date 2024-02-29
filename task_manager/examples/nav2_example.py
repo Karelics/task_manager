@@ -30,7 +30,7 @@ def get_spin_goal_in_json(target_yaw_rad):
 def start_navigation_task(execute_task_client):
     """ Executes a navigation task asynchronously """
     goal = ExecuteTask.Goal()
-    goal.task = "navigation/navigate_to_pose"
+    goal.task_name = "navigation/navigate_to_pose"
     goal.source = "Nav2_example"
     goal.task_data = get_navigation_goal_in_json(x=0.53, y=-0.58)
 
@@ -40,7 +40,7 @@ def start_navigation_task(execute_task_client):
 def start_spin_task(execute_task_client):
     """ Spin for 180 degrees"""
     goal = ExecuteTask.Goal()
-    goal.task = "navigation/spin"
+    goal.task_name = "navigation/spin"
     goal.source = "Nav2_example"
     goal.task_data = get_spin_goal_in_json(3.14)
 
@@ -51,19 +51,19 @@ def start_nav2_mission(execute_task_client):
     """ Starts a mission that navigates to 4 different poses and spins the robot in between them. """
     mission_goal = Mission.Goal(
             subtasks=[
-                SubtaskGoal(task="navigation/navigate_to_pose", data=get_navigation_goal_in_json(x=0.55, y=-0.55)),
-                SubtaskGoal(task="navigation/spin", data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task="navigation/navigate_to_pose", data=get_navigation_goal_in_json(x=0.55, y=0.55)),
-                SubtaskGoal(task="navigation/spin", data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task="navigation/navigate_to_pose", data=get_navigation_goal_in_json(x=-0.55, y=0.55)),
-                SubtaskGoal(task="navigation/spin", data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task="navigation/navigate_to_pose", data=get_navigation_goal_in_json(x=-0.55, y=-0.55)),
-                SubtaskGoal(task="navigation/spin", data=get_spin_goal_in_json(1.57)),
+                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=-0.55)),
+                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=0.55)),
+                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=0.55)),
+                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=-0.55)),
+                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
             ]
         )
 
     goal = ExecuteTask.Goal()
-    goal.task = "system/mission"
+    goal.task_name = "system/mission"
     goal.source = "Nav2_example"
     goal.task_data = json.dumps(extract_values(mission_goal))
 
