@@ -231,7 +231,7 @@ class TaskManager(Node):
             )
             return None, ExecuteTask.Result().ERROR_UNKNOWN_TASK
 
-        self.get_logger().info(f"Got a task request from '{request.source}' to start a task '{request.task_name}'.")
+        self.get_logger().info(f"Got a request from '{request.source}' to start '{request.task_name}' task.")
         try:
             task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task_name])
         except DuplicateTaskIdException as error_msg:

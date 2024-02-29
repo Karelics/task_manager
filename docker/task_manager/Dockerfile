@@ -16,6 +16,7 @@ ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-nav2-msgs \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -39,7 +40,7 @@ RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
 RUN echo 'eval "$(register-python-argcomplete3 colcon)"' >> /opt/ros/${ROS_DISTRO}/setup.sh
 
 # Source the new workspace in the main terminal
-COPY docker/ros_entrypoint.sh /ros_entrypoint.sh
+COPY docker/task_manager/ros_entrypoint.sh /ros_entrypoint.sh
 ENTRYPOINT ["/ros_entrypoint.sh"]
 
 CMD ["bash"]

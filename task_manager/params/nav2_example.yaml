@@ -1,0 +1,22 @@
+task_manager:
+  ros__parameters:
+    tasks: [
+      "navigate_to_pose",
+      "spin",
+    ]
+
+    navigate_to_pose:
+      task_name: "navigation/navigate_to_pose"
+      topic: "/navigate_to_pose"
+      msg_interface: "nav2_msgs.action.NavigateToPose"
+      blocking: True
+      cancel_on_stop: True
+      reentrant: False
+
+    spin:
+      task_name: "navigation/spin"
+      topic: "/spin"
+      msg_interface: "nav2_msgs.action.Spin"
+      blocking: True
+      cancel_on_stop: True
+      reentrant: False
