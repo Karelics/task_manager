@@ -41,7 +41,7 @@ class TaskServiceServer:
 
         :param node: ROS Node
         :param task_specs: General task info
-        :param task_topic_prefix: Action topic prefix for the task
+        :param task_topic_prefix: Service topic prefix for the task
         :param execute_task_cb: Callback to execute a single task
         """
         self._execute_task_cb = execute_task_cb
