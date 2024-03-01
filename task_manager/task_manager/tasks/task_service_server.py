@@ -54,6 +54,10 @@ class TaskServiceServer:
         )
 
     def service_callback(self, request, response):
+        """
+        Service callback for the task. Converts the request into JSON, calls the task execution callback,
+        and return the task result in ROS message format.
+        """
         task_data = json.dumps(extract_values(request))
         goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")
         result = self._execute_task_cb(goal)
