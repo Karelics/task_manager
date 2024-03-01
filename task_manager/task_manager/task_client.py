@@ -28,7 +28,7 @@ from rclpy.node import Node
 # ROS messages
 from action_msgs.msg import GoalInfo, GoalStatus
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 # Current package

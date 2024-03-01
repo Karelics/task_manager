@@ -15,19 +15,16 @@
 #  ------------------------------------------------------------------
 
 import json
-from functools import partial
 
 # ROS
-from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
-from task_manager_msgs.msg import TaskStatus
 
 # Current package
 from task_manager.task_specs import TaskSpecs
@@ -58,9 +55,6 @@ class TaskServiceServer:
 
     def service_callback(self, request, response):
         task_data = json.dumps(extract_values(request))
-        goal = ExecuteTask.Goal(task_id="", task=self.task_specs.task_name, task_data=task_data,
-                                source="")  # TODO Add source
-        from unittest.mock import Mock
-        result = self._execute_task_cb(goal, Mock())
-        print(result)
-        return response
+        goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")
+        result = self._execute_task_cb(goal)
+        return populate_instance(json.loads(result.task_result), response)

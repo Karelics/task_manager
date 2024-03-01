@@ -38,7 +38,7 @@ from rosbridge_library.internal.message_conversion import extract_values
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks
@@ -227,6 +227,7 @@ class TaskManagerNodeParams:
     def get_params(self):
         """Returns the Task Manager parameters."""
         self._params.append(Parameter(name="tasks", value=self._tasks))
+        self._params.append(Parameter(name="enable_task_servers", value=True))
         return self._params
 
 

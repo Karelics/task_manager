@@ -37,7 +37,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
 from task_manager_msgs.srv import CancelTasks, StopTasks
@@ -139,7 +139,6 @@ class TaskManager(Node):
 
                 elif task_specs.task_server_type == TaskServerType.SERVICE:
                     # TODO What if we have forward slash in the task name?
-                    # TODO We don't yet auto-generate new Services that could be easily called
                     TaskServiceServer(
                         node=self,
                         task_specs=task_specs,
@@ -149,14 +148,21 @@ class TaskManager(Node):
 
     def setup_system_tasks(self):
         """Create servers for system tasks."""
-        stop_topic = "_task_manager/system/stop"  # Create the ROS service as a hidden topic
+        stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
+        cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
+        mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
+
+        if not self._enable_task_servers:
+            # Make services hidden. Actions cannot be hidden in a same way as services are,
+            # so Missions are always public.
+            stop_topic = "_" + stop_topic
+            cancel_topic = "_" + cancel_topic
+
         stop_service = StopTasksService(self, active_tasks=self.active_tasks)
         self.create_service(
             StopTasks, stop_topic, callback=stop_service.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
         )
-        self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
 
-        cancel_topic = "_task_manager/system/cancel_task"  # Create the ROS service as a hidden topic
         cancel_service = CancelTasksService(self, active_tasks=self.active_tasks)
         self.create_service(
             CancelTasks,
@@ -164,10 +170,12 @@ class TaskManager(Node):
             callback=cancel_service.service_cb,
             callback_group=MutuallyExclusiveCallbackGroup(),
         )
-        self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
 
-        mission = Mission(self, action_name="/task_manager/task/system/mission", execute_task_cb=self.execute_task)
-        self.known_tasks["system/mission"] = mission.get_task_specs()
+        mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
+
+        self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
+        self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
+        self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
@@ -184,7 +192,7 @@ class TaskManager(Node):
 
         return response
 
-    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle):
+    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None):
         """Execute a single task."""
         if request.task_id == "":
             request.task_id = str(uuid.uuid4())
@@ -254,13 +262,13 @@ class TaskManager(Node):
         return task_client, error_code
 
     @staticmethod
-    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle):
+    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None):
         """Waits for the running task to finish.
 
         :raises CancelTaskFailedError: If the task cancellation fails
         """
         while rclpy.ok() and not task_client.goal_done.is_set():
-            if goal_handle.is_cancel_requested:
+            if goal_handle and goal_handle.is_cancel_requested:
                 task_client.cancel_task()
                 break
             time.sleep(1 / 50)

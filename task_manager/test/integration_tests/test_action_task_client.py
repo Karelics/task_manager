@@ -29,7 +29,7 @@ from mock_servers import create_fib_action_server
 # ROS messages
 from example_interfaces.action import Fibonacci
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 # Current package

@@ -22,7 +22,7 @@ from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.action import Mission as MissionAction
 from task_manager_msgs.msg import SubtaskResult, TaskStatus
@@ -46,11 +46,10 @@ class Mission:
         :param execute_task_cb: Callback to execute a single task
         """
         self.execute_task_cb = execute_task_cb
-        self._action_name = action_name
         ActionServer(
             node=node,
             action_type=MissionAction,
-            action_name=self._action_name,
+            action_name=action_name,
             execute_callback=self.execute_cb,
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
@@ -97,13 +96,14 @@ class Mission:
         goal_handle.succeed()
         return result
 
-    def get_task_specs(self) -> TaskSpecs:
+    @staticmethod
+    def get_task_specs(mission_topic) -> TaskSpecs:
         """Returns TaskSpecs object that describes the task properties."""
         return TaskSpecs(
             task_name="system/mission",
             blocking=False,
             cancel_on_stop=False,
-            topic=self._action_name,
+            topic=mission_topic,
             cancel_reported_as_success=False,
             reentrant=False,
             msg_interface=MissionAction,

@@ -24,7 +24,7 @@ from rclpy.node import Node
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 
@@ -60,7 +60,7 @@ class TaskActionServer:
     def _execute_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
         task_data = json.dumps(extract_values(request))
-        goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")  # TODO Add source
+        goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")
         result = self._execute_task_cb(goal, goal_handle)
 
         if result.task_status == TaskStatus.DONE:

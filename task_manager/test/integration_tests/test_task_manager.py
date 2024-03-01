@@ -29,8 +29,9 @@ from task_manager_test_utils import TaskManagerTestNode, create_fibonacci_task_g
 # ROS messages
 from action_msgs.msg import GoalStatus
 from example_interfaces.action import Fibonacci
+from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
 
@@ -397,6 +398,16 @@ class TestTaskManager(TaskManagerTestNode):
 
         self.assertEqual(result.status, GoalStatus.STATUS_SUCCEEDED)
         self.assertEqual(result.result, Fibonacci.Result(sequence=[0, 1]))
+
+    def test_call_tasks_service_server(self):
+        """Test calling the direct service server that a task exposes."""
+        service_topic = f"{self.task_manager_node.task_registrator.TASK_TOPIC_PREFIX}/add_two_ints"
+        client = self.task_manager_node.create_client(AddTwoInts, service_topic)
+        client.wait_for_service(timeout_sec=1)
+
+        response = client.call(AddTwoInts.Request(a=1, b=0))
+        expected_response = AddTwoInts.Response(sum=1)
+        self.assertEqual(response, expected_response)
 
 
 def _wait_for_calls(mock_object, calls, timeout=0.5):
