@@ -48,6 +48,7 @@ from task_manager_msgs.srv import CancelTasks, StopTasks
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_manager_node import TaskManager
 from task_manager.task_registrator import TaskRegistrator
+from task_manager.task_specs import TaskSpecs, TaskServerType
 
 # pylint: disable=too-few-public-methods  # helper class for tests
 # pylint: disable=protected-access
@@ -202,37 +203,43 @@ class TaskManagerNodeParams:
         self._params = []
         self._tasks = []
 
-    def add_task(self, task_name, topic, msg_interface: str, *, blocking=False, cancel_on_stop=False):
+    def add_task(self, task_specs: TaskSpecs):
         """Adds a new task to parameter list."""
         self._params.extend(
             [
-                Parameter(name=f"{task_name}.task_name", value=task_name),
-                Parameter(name=f"{task_name}.topic", value=topic),
-                Parameter(name=f"{task_name}.msg_interface", value=msg_interface),
-                Parameter(name=f"{task_name}.blocking", value=blocking),
-                Parameter(name=f"{task_name}.cancel_on_stop", value=cancel_on_stop),
+                Parameter(name=f"{task_specs.task_name}.task_name", value=task_specs.task_name),
+                Parameter(name=f"{task_specs.task_name}.topic", value=task_specs.topic),
+                Parameter(name=f"{task_specs.task_name}.msg_interface", value=task_specs.msg_interface),
+                Parameter(name=f"{task_specs.task_name}.blocking", value=task_specs.blocking),
+                Parameter(name=f"{task_specs.task_name}.cancel_on_stop", value=task_specs.cancel_on_stop),
             ]
         )
-        self._tasks.append(task_name)
+        self._tasks.append(task_specs.task_name)
 
     def add_fibonacci_task(self, task_name, blocking=False, cancel_on_stop=False):
         """Adds a new fibonacci task to parameter list."""
         self.add_task(
-            task_name=task_name,
-            topic=f"/{task_name}",
-            msg_interface="example_interfaces.action.Fibonacci",
-            blocking=blocking,
-            cancel_on_stop=cancel_on_stop,
+            TaskSpecs(
+                task_name=task_name,
+                topic=f"/{task_name}",
+                msg_interface="example_interfaces.action.Fibonacci",
+                task_server_type=TaskServerType.ACTION,
+                blocking=blocking,
+                cancel_on_stop=cancel_on_stop
+            )
         )
 
     def add_service_task_add_two_ints(self, task_name, blocking=False):
         """Adds a new 'add two ints' service task to parameter list."""
         self.add_task(
-            task_name=task_name,
-            topic=f"/{task_name}",
-            msg_interface="example_interfaces.srv.AddTwoInts",
-            blocking=blocking,
-            cancel_on_stop=False,
+            TaskSpecs(
+                task_name=task_name,
+                topic=f"/{task_name}",
+                msg_interface="example_interfaces.srv.AddTwoInts",
+                task_server_type=TaskServerType.SERVICE,
+                blocking=blocking,
+                cancel_on_stop=False,
+            )
         )
 
     def get_params(self):

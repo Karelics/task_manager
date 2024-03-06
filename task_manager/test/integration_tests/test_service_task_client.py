@@ -112,7 +112,7 @@ class TestServiceTaskClient(unittest.TestCase):
         # Destroy the service server and try again
         self._node.destroy_service(self._add_ints_srv)
         # Sleeping here is necessary, otherwise the client's wait_for_service might still return True
-        # for a brief moment. https://github.com/ros2/rclpy/issues/1191
+        # for a brief moment. https://github.com/ros2/rclpy/issues/1g191
         time.sleep(0.1)
 
         task_client = ServiceTaskClient(
@@ -142,8 +142,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=2,
             )
+            task_client.cancel_task_timeout = 2.0
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             task_client.cancel_task()
             self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
@@ -154,8 +154,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=0.5,
             )
+            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             with self.assertRaises(CancelTaskFailedError):
                 task_client.cancel_task()
@@ -170,8 +170,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=0.5,
             )
+            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
             self.assertTrue(task_client.goal_done.wait(1))
             task_client.cancel_task()

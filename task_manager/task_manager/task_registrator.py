@@ -107,7 +107,6 @@ class TaskRegistrator:
                 task_specs=task_specs,
                 task_details=task_details,
                 action_clients=self._action_clients,
-                cancel_task_timeout=self.cancel_task_timeout,
             )
             msg_interface = task_specs.msg_interface.Goal()
         else:
@@ -116,10 +115,10 @@ class TaskRegistrator:
                 task_specs=task_specs,
                 task_details=task_details,
                 service_clients=self._service_clients,
-                cancel_task_timeout=self.cancel_task_timeout,
             )
             msg_interface = task_specs.msg_interface.Request()
 
+        task_client.cancel_task_timeout = self.cancel_task_timeout
         task_client.register_done_callback(self._task_done_cb)
 
         task_goal_message = populate_msg(task_data=request.task_data, msg_interface=msg_interface)
