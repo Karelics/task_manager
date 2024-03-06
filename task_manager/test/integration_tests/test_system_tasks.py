@@ -23,7 +23,7 @@ from task_manager_test_utils import TaskManagerTestNode
 # ROS messages
 from action_msgs.msg import GoalStatus
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 
@@ -76,9 +76,7 @@ class SystemTaskTests(TaskManagerTestNode):
     def test_stop_task(self) -> None:
         """Test cases for Stop system task."""
         with self.subTest("Task with 'cancel_on_stop' field is cancelled"):
-            goal_handle = self.start_fibonacci_action_task(
-                "fibonacci_cancel_on_stop", run_time_secs=10, task_id="111"
-            )
+            goal_handle = self.start_fibonacci_action_task("fibonacci_cancel_on_stop", run_time_secs=10, task_id="111")
             self.wait_for_task_start("111")
 
             stop_response = self.execute_stop_task()

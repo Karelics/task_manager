@@ -22,12 +22,12 @@ from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.action import Mission as MissionAction
 from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
 

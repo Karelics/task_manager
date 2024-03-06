@@ -31,11 +31,11 @@ from action_msgs.msg import GoalStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskStartError
 
 # pylint: disable=protected-access

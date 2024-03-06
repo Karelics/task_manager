@@ -39,16 +39,16 @@ from rosbridge_library.internal.message_conversion import extract_values
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_manager_node import TaskManager
 from task_manager.task_registrator import TaskRegistrator
-from task_manager.task_specs import TaskSpecs, TaskServerType
+from task_manager.task_specs import TaskServerType, TaskSpecs
 
 # pylint: disable=too-few-public-methods  # helper class for tests
 # pylint: disable=protected-access
@@ -225,7 +225,7 @@ class TaskManagerNodeParams:
                 msg_interface="example_interfaces.action.Fibonacci",
                 task_server_type=TaskServerType.ACTION,
                 blocking=blocking,
-                cancel_on_stop=cancel_on_stop
+                cancel_on_stop=cancel_on_stop,
             )
         )
 

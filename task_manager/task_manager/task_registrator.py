@@ -26,14 +26,14 @@ from rclpy.node import Node
 from rosbridge_library.internal.message_conversion import (
     FieldTypeMismatchException,
     NonexistentFieldException,
-    populate_instance
+    populate_instance,
 )
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import (
     ActionTaskClient,

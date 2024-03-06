@@ -145,4 +145,3 @@ ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_m
 
 Task Manager is maintained by Karelics Oy. Current active maintainers:
 - [Janne Karttunen](https://www.linkedin.com/in/janne-karttunen-a22375209/)
-

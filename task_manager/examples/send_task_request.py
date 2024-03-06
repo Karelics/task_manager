@@ -1,27 +1,31 @@
 import json
 
+# ROS
 import rclpy
-from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.node import Node
 
+# Thirdparty
+from rosbridge_library.internal.message_conversion import extract_values, populate_instance
+
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.srv import StopTasks
-
-from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
 # pylint: disable=duplicate-code
 # Disables duplicate code warning, fine in examples
 
 
 class TaskSender(Node):
-    """ Sends a request to Task Manager to start a new task """
+    """Sends a request to Task Manager to start a new task."""
+
     def __init__(self) -> None:
         super().__init__("task_sender")
         self._client = ActionClient(self, ExecuteTask, "/task_manager/execute_task")
         self._client.wait_for_server()
 
     def start_task(self):
-        """ Sends Stop task request to Task Manager"""
+        """Sends Stop task request to Task Manager."""
         goal = ExecuteTask.Goal()
         goal.task_name = "system/stop"
         goal.source = "Task Sender"
@@ -31,13 +35,13 @@ class TaskSender(Node):
         future.add_done_callback(self._task_accepted_callback)
 
     def _task_accepted_callback(self, future):
-        """ Callback to handle Accepted action goal"""
+        """Callback to handle Accepted action goal."""
         goal_handle = future.result()
         future = goal_handle.get_result_async()
         future.add_done_callback(self._task_done_callback)
 
     def _task_done_callback(self, future):
-        """ Called when Task finishes """
+        """Called when Task finishes."""
         response: ExecuteTask.Result = future.result()
         task_id = response.result.task_id
         task_status = response.result.task_status

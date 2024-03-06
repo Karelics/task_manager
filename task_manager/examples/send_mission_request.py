@@ -1,28 +1,32 @@
 import json
 
+# ROS
 import rclpy
-from rclpy.node import Node
 from rclpy.action import ActionClient
+from rclpy.node import Node
 
-from task_manager_msgs.action import ExecuteTask, Mission
-from task_manager_msgs.srv import StopTasks
-from task_manager_msgs.msg import SubtaskGoal
-
+# Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
+
+# Task Manager messages
+from task_manager_msgs.action import ExecuteTask, Mission
+from task_manager_msgs.msg import SubtaskGoal
+from task_manager_msgs.srv import StopTasks
 
 # pylint: disable=duplicate-code
 # Disables duplicate code warning, fine in examples
 
 
 class MissionSender(Node):
-    """ Sends a request to Task Manager to start a new task """
+    """Sends a request to Task Manager to start a new task."""
+
     def __init__(self) -> None:
         super().__init__("mission_sender")
         self._client = ActionClient(self, ExecuteTask, "/task_manager/execute_task")
         self._client.wait_for_server()
 
     def start_mission(self):
-        """ Sends a Mission with 2 consecutive Stop subtask requests to Task Manager"""
+        """Sends a Mission with 2 consecutive Stop subtask requests to Task Manager."""
         goal = ExecuteTask.Goal()
         goal.task_name = "system/mission"
         goal.source = "Mission Sender"
@@ -40,13 +44,13 @@ class MissionSender(Node):
         future.add_done_callback(self._task_accepted_callback)
 
     def _task_accepted_callback(self, future):
-        """ Callback to handle Accepted action goal"""
+        """Callback to handle Accepted action goal."""
         goal_handle = future.result()
         future = goal_handle.get_result_async()
         future.add_done_callback(self._task_done_callback)
 
     def _task_done_callback(self, future):
-        """ Called when Task finishes """
+        """Called when Task finishes."""
         response: ExecuteTask.Result = future.result()
         task_id = response.result.task_id
         task_status = response.result.task_status

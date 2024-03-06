@@ -37,12 +37,12 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import CancelTaskFailedError, TaskClient, TaskStartError
 from task_manager.task_details import TaskDetails

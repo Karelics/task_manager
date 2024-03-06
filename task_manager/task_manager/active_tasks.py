@@ -17,7 +17,7 @@
 import threading
 from typing import Callable, Dict, List, Optional
 
-# Current package
+# Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs

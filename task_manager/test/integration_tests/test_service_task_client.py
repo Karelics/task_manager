@@ -29,10 +29,10 @@ from mock_servers import create_add_two_ints_service
 # ROS messages
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_client import CancelTaskFailedError, ServiceTaskClient, TaskStartError
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs

@@ -1,12 +1,15 @@
+# ROS
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
+# Task Manager messages
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskStatus
 
 
 class TaskTracker(Node):
-    """ Tracks all the currently active Task Manager tasks """
+    """Tracks all the currently active Task Manager tasks."""
+
     def __init__(self) -> None:
         super().__init__("task_tracker")
         self.active_tasks = {str: ActiveTask}
@@ -25,7 +28,7 @@ class TaskTracker(Node):
         print("Waiting for tasks")
 
     def _active_tasks_callback(self, data: ActiveTaskArray):
-        """ Called every time the active tasks list changes """
+        """Called every time the active tasks list changes."""
         for active_task in data.active_tasks:
             if active_task.task_status == TaskStatus.IN_PROGRESS and active_task.task_id not in self.active_tasks:
                 self.active_tasks[active_task.task_id] = active_task
