@@ -79,6 +79,9 @@ class TaskManagerTestNode(unittest.TestCase):
         self.task_manager_node.setup_system_tasks()
 
         self.test_tasks_node = TestTasksNode()
+
+        # num_threads defaults to CPU core count. In GitHub Action pipelines, there are only 2 CPU cores available,
+        # causing ROS messages to hang during the tests due to insufficient amount of maximum threads.
         self.executor = MultiThreadedExecutor(num_threads=10)
 
         self.executor.add_node(self.task_manager_node)
