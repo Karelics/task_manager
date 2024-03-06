@@ -29,6 +29,7 @@ from rclpy.action.client import ActionClient, ClientGoalHandle
 from rclpy.action.server import CancelResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
 # Thirdparty
 from mock_servers import create_add_two_ints_service, create_fib_action_server
@@ -78,7 +79,7 @@ class TaskManagerTestNode(unittest.TestCase):
         self.task_manager_node.setup_system_tasks()
 
         self.test_tasks_node = TestTasksNode()
-        self.executor = MultiThreadedExecutor()
+        self.executor = MultiThreadedExecutor(num_threads=10)
 
         self.executor.add_node(self.task_manager_node)
         self.executor.add_node(self.test_tasks_node)
@@ -89,8 +90,14 @@ class TaskManagerTestNode(unittest.TestCase):
         self.execute_task_client.wait_for_server(1)
 
         # Track the active tasks to track which tasks have started their execution
+
+        qos_profile = QoSProfile(
+            depth=10,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
         self.task_manager_node.create_subscription(
-            ActiveTaskArray, "/task_manager/active_tasks", self._active_tasks_cb, qos_profile=10
+            ActiveTaskArray, "/task_manager/active_tasks", self._active_tasks_cb, qos_profile=qos_profile
         )
         self._tasks_started = []
 
@@ -107,8 +114,9 @@ class TaskManagerTestNode(unittest.TestCase):
 
     @staticmethod
     def _get_response(future, timeout=5) -> ClientGoalHandle:
-        start_time = time.time()
-        while not future.done() and time.time() <= start_time + timeout:
+        start = time.time()
+        while not future.done():
+            assert time.time() - start < timeout
             time.sleep(0.01)
         return future.result()
 

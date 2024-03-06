@@ -9,7 +9,7 @@ from task_manager_msgs.action import ExecuteTask, Mission
 from task_manager_msgs.msg import SubtaskGoal
 from nav2_msgs.action import NavigateToPose, Spin
 
-from rosbridge_library.internal.message_conversion import extract_values, populate_instance
+from rosbridge_library.internal.message_conversion import extract_values
 
 
 def get_navigation_goal_in_json(x, y):
@@ -49,18 +49,18 @@ def start_spin_task(execute_task_client):
 
 def start_nav2_mission(execute_task_client):
     """ Starts a mission that navigates to 4 different poses and spins the robot in between them. """
-    mission_goal = Mission.Goal(
-            subtasks=[
-                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=-0.55)),
-                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=0.55)),
-                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=0.55)),
-                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
-                SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=-0.55)),
-                SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
-            ]
-        )
+    subtasks = [
+        SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=-0.55)),
+        SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+        SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=0.55, y=0.55)),
+        SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+        SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=0.55)),
+        SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+        SubtaskGoal(task_name="navigation/navigate_to_pose", task_data=get_navigation_goal_in_json(x=-0.55, y=-0.55)),
+        SubtaskGoal(task_name="navigation/spin", task_data=get_spin_goal_in_json(1.57)),
+    ]
+
+    mission_goal = Mission.Goal(subtasks=subtasks)
 
     goal = ExecuteTask.Goal()
     goal.task_name = "system/mission"

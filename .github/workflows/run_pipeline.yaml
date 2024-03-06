@@ -1,0 +1,13 @@
+name: Task Manager CI pipeline
+on: [pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build the Docker image
+      run: docker compose -f docker/task_manager/docker-compose.yaml build
+    - name: Tests
+      run: docker compose -f docker/task_manager/docker-compose.yaml run tests
+    - name: Pylint
+      run: docker compose -f docker/task_manager/docker-compose.yaml run pylint

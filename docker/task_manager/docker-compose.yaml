@@ -14,3 +14,19 @@ services:
       - ../../task_manager:/ros2_ws/src/task_manager/
       - ../../task_manager_msgs:/ros2_ws/src/task_manager_msgs/
     command: bash
+
+  tests:
+    image: task_manager
+    container_name: task_manager_tests
+    profiles: ["tests"]
+    volumes:
+      - ../../task_manager:/ros2_ws/src/task_manager/
+    command: python3 -m pytest /ros2_ws/src/task_manager/test
+
+  pylint:
+    image: task_manager
+    container_name: task_manager_pylint
+    profiles: [ "pylint" ]
+    volumes:
+      - ../../task_manager:/ros2_ws/src/task_manager/
+    command: bash -c "find ros2_ws/src/task_manager -type f -name "*.py" | xargs pylint --rcfile=pyproject.toml"

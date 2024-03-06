@@ -9,6 +9,9 @@ from task_manager_msgs.srv import StopTasks
 
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
+# pylint: disable=duplicate-code
+# Disables duplicate code warning, fine in examples
+
 
 class TaskSender(Node):
     """ Sends a request to Task Manager to start a new task """
@@ -39,7 +42,7 @@ class TaskSender(Node):
         task_id = response.result.task_id
         task_status = response.result.task_status
         task_result = json.loads(response.result.task_result)
-        # task_result = populate_instance(task_result, StopTasks.Response())  # Converts back to ROS interface if needed
+        _stop_response = populate_instance(task_result, StopTasks.Response())  # Converts back to ROS msg if needed
         print(f"Task finished with status {task_status}")
         print(f"Task ID: {task_id}")
         print(f"Task result: {task_result}")

@@ -6,9 +6,12 @@ from rclpy.action import ActionClient
 
 from task_manager_msgs.action import ExecuteTask, Mission
 from task_manager_msgs.srv import StopTasks
-from task_manager_msgs.msg import SubtaskGoal, SubtaskResult
+from task_manager_msgs.msg import SubtaskGoal
 
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
+
+# pylint: disable=duplicate-code
+# Disables duplicate code warning, fine in examples
 
 
 class MissionSender(Node):

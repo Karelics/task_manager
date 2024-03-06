@@ -17,8 +17,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
     ros-${ROS_DISTRO}-nav2-msgs \
+    python3-pip \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Install pylint for code analysis and copy the configuration
+RUN pip3 install pylint --no-cache-dir
+COPY ./pyproject.toml /
 
 # Build Task Manager in the newly created workspace
 COPY ./task_manager ${ROS2_WS}/src/task_manager
