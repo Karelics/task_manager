@@ -1,0 +1,91 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        # It is recommended to specify the latest version of Python
+        # supported by your project here, or alternatively use
+        # pre-commit's default_language_version, see
+        # https://pre-commit.com/#top_level-default_language_version
+        language_version: python3.8
+  - repo: https://github.com/hadialqattan/pycln
+    rev: v2.1.3
+    hooks:
+      - id: pycln
+        args: [ --all ]
+        language_version: python3.8
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.3.1
+    hooks:
+      - id: pyupgrade
+        args: ["--py38", "--keep-runtime-typing"]
+        language_version: python3.8
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        language_version: python3.8
+      - id: end-of-file-fixer
+        language_version: python3.8
+        exclude: ^.idea/  # PyCharm would automatically remove end of lines and this was re-adding them
+      - id: check-merge-conflict
+        language_version: python3.8
+      - id: check-yaml
+        exclude: ^(.clang-format)$
+        args: [--unsafe]
+        language_version: python3.8
+      - id: check-ast
+        language_version: python3.8
+      - id: debug-statements
+        language_version: python3.8
+      - id: check-docstring-first
+        language_version: python3.8
+      - id: check-xml
+        language_version: python3.8
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        name: isort (python)
+        args: ["--filter-files", "--resolve-all-configs"]
+        language_version: python3.8
+
+  - repo: https://github.com/myint/docformatter
+    rev: v1.5.1
+    hooks:
+      - id: docformatter
+        args: [ --in-place,
+          "--wrap-summaries", "120",
+          "--wrap-descriptions", "120" ]
+        language_version: python3.8
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    # Ruff version.
+    rev: 'v0.0.245'
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        language_version: python3.8
+
+# need to specify node version to run correctly on Ubuntu 18
+# https://github.com/scverse/cookiecutter-scverse/issues/143
+  - repo: https://github.com/tier4/pre-commit-hooks-ros
+    rev: v0.8.0
+    hooks:
+      - id: prettier-xacro
+        language: node
+        language_version: 16.19.0
+      - id: prettier-launch-xml
+        language: node
+        language_version: 16.19.0
+      - id: prettier-package-xml
+        language: node
+        language_version: 16.19.0
+      - id: ros-include-guard
+        language_version: python3.8
+      - id: sort-package-xml
+        language_version: python3.8
+
