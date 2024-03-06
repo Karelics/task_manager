@@ -112,7 +112,7 @@ class TestServiceTaskClient(unittest.TestCase):
         # Destroy the service server and try again
         self._node.destroy_service(self._add_ints_srv)
         # Sleeping here is necessary, otherwise the client's wait_for_service might still return True
-        # for a brief moment. https://github.com/ros2/rclpy/issues/1g191
+        # for a brief moment. https://github.com/ros2/rclpy/issues/1191
         time.sleep(0.1)
 
         task_client = ServiceTaskClient(
