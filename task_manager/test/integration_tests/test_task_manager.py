@@ -31,7 +31,7 @@ from action_msgs.msg import GoalStatus
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
 

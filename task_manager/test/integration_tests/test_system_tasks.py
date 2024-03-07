@@ -23,7 +23,7 @@ from task_manager_test_utils import TaskManagerTestNode
 # ROS messages
 from action_msgs.msg import GoalStatus
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.msg import TaskStatus
 
 

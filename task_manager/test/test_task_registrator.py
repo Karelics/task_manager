@@ -21,7 +21,7 @@ from unittest.mock import Mock
 # ROS messages
 from example_interfaces.action import Fibonacci
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 
 # Current package

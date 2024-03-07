@@ -18,7 +18,7 @@ import unittest
 from typing import Callable, Dict
 from unittest.mock import Mock
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.msg import TaskStatus
 
 # Current package

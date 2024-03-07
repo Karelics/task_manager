@@ -29,7 +29,7 @@ from rosbridge_library.internal.message_conversion import (
     populate_instance
 )
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 

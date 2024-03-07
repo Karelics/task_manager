@@ -28,7 +28,7 @@ from rosbridge_library.internal.message_conversion import extract_values
 from action_msgs.msg import GoalStatus
 from example_interfaces.action import Fibonacci
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.msg import TaskStatus
 
 # Current package

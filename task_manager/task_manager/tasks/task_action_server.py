@@ -24,7 +24,7 @@ from rclpy.node import Node
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 

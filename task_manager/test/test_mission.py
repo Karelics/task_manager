@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 from unittest.mock import Mock, patch
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.action import Mission as MissionAction
 from task_manager_msgs.msg import SubtaskGoal, SubtaskResult, TaskStatus

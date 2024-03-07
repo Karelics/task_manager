@@ -38,7 +38,7 @@ from rosbridge_library.internal.message_conversion import extract_values
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks

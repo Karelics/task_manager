@@ -29,7 +29,7 @@ from mock_servers import create_add_two_ints_service
 # ROS messages
 from example_interfaces.srv import AddTwoInts
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.msg import TaskStatus
 
 # Current package

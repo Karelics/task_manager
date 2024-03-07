@@ -23,7 +23,7 @@ from rosbridge_library.internal.message_conversion import extract_values, popula
 # ROS messages
 from action_msgs.msg import GoalStatus
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.action import Mission, ExecuteTask
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 

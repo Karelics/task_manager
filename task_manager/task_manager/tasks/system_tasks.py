@@ -18,7 +18,7 @@
 # ROS
 from rclpy.node import Node
 
-# Task Manager messages
+# Karelics messages
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
 # Current package
