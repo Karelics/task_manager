@@ -29,10 +29,10 @@ from mock_servers import create_add_two_ints_service
 # ROS messages
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_client import CancelTaskFailedError, ServiceTaskClient, TaskStartError
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
@@ -142,8 +142,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=2,
             )
+            task_client.cancel_task_timeout = 2.0
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             task_client.cancel_task()
             self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
@@ -154,8 +154,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=0.5,
             )
+            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             with self.assertRaises(CancelTaskFailedError):
                 task_client.cancel_task()
@@ -170,8 +170,8 @@ class TestServiceTaskClient(unittest.TestCase):
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
-                cancel_task_timeout=0.5,
             )
+            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
             self.assertTrue(task_client.goal_done.wait(1))
             task_client.cancel_task()

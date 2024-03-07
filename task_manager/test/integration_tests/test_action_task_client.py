@@ -29,10 +29,10 @@ from mock_servers import create_fib_action_server
 # ROS messages
 from example_interfaces.action import Fibonacci
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, TaskStartError
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs

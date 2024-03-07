@@ -17,14 +17,14 @@ import json
 import unittest
 
 # Thirdparty
-from task_manager_test_utils import TaskManagerTestNode
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
+from task_manager_test_utils import TaskManagerTestNode
 
 # ROS messages
 from action_msgs.msg import GoalStatus
 
-# Karelics messages
-from task_manager_msgs.action import Mission, ExecuteTask
+# Task Manager messages
+from task_manager_msgs.action import ExecuteTask, Mission
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 

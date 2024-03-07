@@ -26,14 +26,14 @@ from rclpy.node import Node
 from rosbridge_library.internal.message_conversion import (
     FieldTypeMismatchException,
     NonexistentFieldException,
-    populate_instance
+    populate_instance,
 )
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import (
     ActionTaskClient,
@@ -107,7 +107,6 @@ class TaskRegistrator:
                 task_specs=task_specs,
                 task_details=task_details,
                 action_clients=self._action_clients,
-                cancel_task_timeout=self.cancel_task_timeout,
             )
             msg_interface = task_specs.msg_interface.Goal()
         else:
@@ -116,10 +115,10 @@ class TaskRegistrator:
                 task_specs=task_specs,
                 task_details=task_details,
                 service_clients=self._service_clients,
-                cancel_task_timeout=self.cancel_task_timeout,
             )
             msg_interface = task_specs.msg_interface.Request()
 
+        task_client.cancel_task_timeout = self.cancel_task_timeout
         task_client.register_done_callback(self._task_done_cb)
 
         task_goal_message = populate_msg(task_data=request.task_data, msg_interface=msg_interface)

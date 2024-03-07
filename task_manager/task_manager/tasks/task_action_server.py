@@ -24,11 +24,11 @@ from rclpy.node import Node
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_specs import TaskSpecs
 
 # pylint: disable=too-few-public-methods

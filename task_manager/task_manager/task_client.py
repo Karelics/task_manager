@@ -28,10 +28,10 @@ from rclpy.node import Node
 # ROS messages
 from action_msgs.msg import GoalInfo, GoalStatus
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
-# Current package
+# Task Manager
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
 
@@ -70,21 +70,17 @@ class ActionTaskClient(TaskClient):
         node: Node,
         task_details: TaskDetails,
         task_specs: TaskSpecs,
-        *,
         action_clients: Dict[str, ActionClient],
-        cancel_task_timeout: Optional[float] = 5.0,
     ):
         """
         :param node: ROS node
         :param task_details: TaskDetails containing the public info about this client's task.
         :param task_specs: General info about the task
         :param action_clients: List of action clients that can be reused to call the task
-        :param cancel_task_timeout: Timeout to wait for task to cancel
         """
         self._node = node
         self._task_details = task_details
         self._task_specs = task_specs
-        self.cancel_task_timeout = cancel_task_timeout
         self.goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
@@ -99,6 +95,7 @@ class ActionTaskClient(TaskClient):
 
         self._goal_handle: Optional[ClientGoalHandle] = None
         self.server_wait_timeout = 10.0
+        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:
@@ -247,22 +244,18 @@ class ServiceTaskClient(TaskClient):
         node: Node,
         task_details: TaskDetails,
         task_specs: TaskSpecs,
-        *,
         service_clients: Dict[str, Client],
-        cancel_task_timeout: Optional[float] = 5.0,
     ):
         """
         :param node: ROS node
         :param task_details: TaskDetails containing the public info about this client's task.
         :param task_specs: General info about the task
         :param service_clients: List of service clients that can be reused to call the task
-        :param cancel_task_timeout: Timeout to wait for task to cancel
         """
         self._node = node
         self._task_details = task_details
         self._task_specs = task_specs
         self._service_clients = service_clients
-        self._cancel_task_timeout = cancel_task_timeout
         self.goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
@@ -274,6 +267,7 @@ class ServiceTaskClient(TaskClient):
             )
 
         self._client = self._service_clients[task_specs.task_name]
+        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:
@@ -317,9 +311,9 @@ class ServiceTaskClient(TaskClient):
             return
         self._node.get_logger().warn(
             f"Currently ongoing service call to {self._task_specs.topic} cannot be cancelled. "
-            f"Waiting for {self._cancel_task_timeout} seconds for the task to finish."
+            f"Waiting for {self.cancel_task_timeout} seconds for the task to finish."
         )
-        if not self.goal_done.wait(self._cancel_task_timeout):
+        if not self.goal_done.wait(self.cancel_task_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
 
     def _done_callback(self, future):

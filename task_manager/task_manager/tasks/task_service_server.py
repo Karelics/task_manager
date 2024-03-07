@@ -23,9 +23,11 @@ from rclpy.node import Node
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 
+# Task Manager messages
 # Karelics messages
 from task_manager_msgs.action import ExecuteTask
 
+# Task Manager
 # Current package
 from task_manager.task_specs import TaskSpecs
 
@@ -34,7 +36,7 @@ from task_manager.task_specs import TaskSpecs
 
 
 class TaskServiceServer:
-    """Creates a Service Server for a task to easily call it for example from the command line. """
+    """Creates a Service Server for a task to easily call it for example from the command line."""
 
     def __init__(self, node: Node, task_specs: TaskSpecs, task_topic_prefix: str, execute_task_cb: callable):
         """
@@ -50,13 +52,14 @@ class TaskServiceServer:
             task_specs.msg_interface,
             f"{task_topic_prefix}/{task_specs.task_name}",
             callback=self.service_callback,
-            callback_group=ReentrantCallbackGroup()
+            callback_group=ReentrantCallbackGroup(),
         )
 
     def service_callback(self, request, response):
-        """
-        Service callback for the task. Converts the request into JSON, calls the task execution callback,
-        and return the task result in ROS message format.
+        """Service callback for the task.
+
+        Converts the request into JSON, calls the task execution callback, and return the task result in ROS message
+        format.
         """
         task_data = json.dumps(extract_values(request))
         goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")

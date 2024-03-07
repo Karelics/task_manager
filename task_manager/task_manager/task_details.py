@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 

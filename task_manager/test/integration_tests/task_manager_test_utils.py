@@ -29,6 +29,7 @@ from rclpy.action.client import ActionClient, ClientGoalHandle
 from rclpy.action.server import CancelResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
 # Thirdparty
 from mock_servers import create_add_two_ints_service, create_fib_action_server
@@ -38,15 +39,16 @@ from rosbridge_library.internal.message_conversion import extract_values
 from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_manager_node import TaskManager
 from task_manager.task_registrator import TaskRegistrator
+from task_manager.task_specs import TaskServerType, TaskSpecs
 
 # pylint: disable=too-few-public-methods  # helper class for tests
 # pylint: disable=protected-access
@@ -78,7 +80,10 @@ class TaskManagerTestNode(unittest.TestCase):
         self.task_manager_node.setup_system_tasks()
 
         self.test_tasks_node = TestTasksNode()
-        self.executor = MultiThreadedExecutor()
+
+        # num_threads defaults to CPU core count. In GitHub Action pipelines, there are only 2 CPU cores available,
+        # causing ROS messages to hang during the tests due to insufficient amount of maximum threads.
+        self.executor = MultiThreadedExecutor(num_threads=10)
 
         self.executor.add_node(self.task_manager_node)
         self.executor.add_node(self.test_tasks_node)
@@ -89,8 +94,14 @@ class TaskManagerTestNode(unittest.TestCase):
         self.execute_task_client.wait_for_server(1)
 
         # Track the active tasks to track which tasks have started their execution
+
+        qos_profile = QoSProfile(
+            depth=10,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
         self.task_manager_node.create_subscription(
-            ActiveTaskArray, "/task_manager/active_tasks", self._active_tasks_cb, qos_profile=10
+            ActiveTaskArray, "/task_manager/active_tasks", self._active_tasks_cb, qos_profile=qos_profile
         )
         self._tasks_started = []
 
@@ -107,8 +118,9 @@ class TaskManagerTestNode(unittest.TestCase):
 
     @staticmethod
     def _get_response(future, timeout=5) -> ClientGoalHandle:
-        start_time = time.time()
-        while not future.done() and time.time() <= start_time + timeout:
+        start = time.time()
+        while not future.done():
+            assert time.time() - start < timeout
             time.sleep(0.01)
         return future.result()
 
@@ -191,37 +203,43 @@ class TaskManagerNodeParams:
         self._params = []
         self._tasks = []
 
-    def add_task(self, task_name, topic, msg_interface: str, *, blocking=False, cancel_on_stop=False):
+    def add_task(self, task_specs: TaskSpecs):
         """Adds a new task to parameter list."""
         self._params.extend(
             [
-                Parameter(name=f"{task_name}.task_name", value=task_name),
-                Parameter(name=f"{task_name}.topic", value=topic),
-                Parameter(name=f"{task_name}.msg_interface", value=msg_interface),
-                Parameter(name=f"{task_name}.blocking", value=blocking),
-                Parameter(name=f"{task_name}.cancel_on_stop", value=cancel_on_stop),
+                Parameter(name=f"{task_specs.task_name}.task_name", value=task_specs.task_name),
+                Parameter(name=f"{task_specs.task_name}.topic", value=task_specs.topic),
+                Parameter(name=f"{task_specs.task_name}.msg_interface", value=task_specs.msg_interface),
+                Parameter(name=f"{task_specs.task_name}.blocking", value=task_specs.blocking),
+                Parameter(name=f"{task_specs.task_name}.cancel_on_stop", value=task_specs.cancel_on_stop),
             ]
         )
-        self._tasks.append(task_name)
+        self._tasks.append(task_specs.task_name)
 
     def add_fibonacci_task(self, task_name, blocking=False, cancel_on_stop=False):
         """Adds a new fibonacci task to parameter list."""
         self.add_task(
-            task_name=task_name,
-            topic=f"/{task_name}",
-            msg_interface="example_interfaces.action.Fibonacci",
-            blocking=blocking,
-            cancel_on_stop=cancel_on_stop,
+            TaskSpecs(
+                task_name=task_name,
+                topic=f"/{task_name}",
+                msg_interface="example_interfaces.action.Fibonacci",
+                task_server_type=TaskServerType.ACTION,
+                blocking=blocking,
+                cancel_on_stop=cancel_on_stop,
+            )
         )
 
     def add_service_task_add_two_ints(self, task_name, blocking=False):
         """Adds a new 'add two ints' service task to parameter list."""
         self.add_task(
-            task_name=task_name,
-            topic=f"/{task_name}",
-            msg_interface="example_interfaces.srv.AddTwoInts",
-            blocking=blocking,
-            cancel_on_stop=False,
+            TaskSpecs(
+                task_name=task_name,
+                topic=f"/{task_name}",
+                msg_interface="example_interfaces.srv.AddTwoInts",
+                task_server_type=TaskServerType.SERVICE,
+                blocking=blocking,
+                cancel_on_stop=False,
+            )
         )
 
     def get_params(self):

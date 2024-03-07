@@ -21,10 +21,10 @@ from unittest.mock import Mock
 # ROS messages
 from example_interfaces.action import Fibonacci
 
-# Karelics messages
+# Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 
-# Current package
+# Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator, populate_msg
 from task_manager.task_specs import TaskServerType, TaskSpecs
