@@ -13,6 +13,7 @@ services:
     volumes:
       - ../../task_manager:/ros2_ws/src/task_manager/
       - ../../task_manager_msgs:/ros2_ws/src/task_manager_msgs/
+      - ../../examples:/examples/
     command: bash
 
   tests:
