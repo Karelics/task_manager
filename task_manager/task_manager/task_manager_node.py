@@ -22,7 +22,7 @@ import time
 import uuid
 from importlib import import_module
 from threading import Lock
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 # ROS
 import rclpy
@@ -192,7 +192,7 @@ class TaskManager(Node):
 
         return response
 
-    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None):
+    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None) -> ExecuteTask.Result:
         """Execute a single task."""
         if request.task_id == "":
             request.task_id = str(uuid.uuid4())
@@ -262,7 +262,7 @@ class TaskManager(Node):
         return task_client, error_code
 
     @staticmethod
-    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None):
+    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None) -> Tuple[TaskStatus, str]:
         """Waits for the running task to finish.
 
         :raises CancelTaskFailedError: If the task cancellation fails
