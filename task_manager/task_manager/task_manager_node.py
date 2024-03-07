@@ -22,7 +22,7 @@ import time
 import uuid
 from importlib import import_module
 from threading import Lock
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 # ROS
 import rclpy
@@ -51,6 +51,7 @@ from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService
 from task_manager.tasks.task_action_server import TaskActionServer
+from task_manager.tasks.task_service_server import TaskServiceServer
 
 
 class TaskManager(Node):
@@ -70,6 +71,8 @@ class TaskManager(Node):
 
         results_qos = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.RELIABLE)
         self.results_pub = self.create_publisher(TaskDoneResult, "/task_manager/results", qos_profile=results_qos)
+
+        self._enable_task_servers = self.declare_parameter("enable_task_servers", False).value
 
         # Lock for starting one task at a time
         self.mutex = Lock()
@@ -123,31 +126,43 @@ class TaskManager(Node):
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
-            if task_specs.task_server_type == TaskServerType.ACTION:
-                # Create an action server for the task that can be easily called from the command line,
-                # in addition to the "execute_task" action server
-                TaskActionServer(
-                    node=self,
-                    task_specs=task_specs,
-                    task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
-                    execute_task_cb=self.execute_task,
-                )
+            if self._enable_task_servers:
+                if task_specs.task_server_type == TaskServerType.ACTION:
+                    # Create an action server for the task that can be easily called from the command line,
+                    # in addition to the "execute_task" action server
+                    TaskActionServer(
+                        node=self,
+                        task_specs=task_specs,
+                        task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
+                        execute_task_cb=self.execute_task,
+                    )
 
-            elif task_specs.task_server_type == TaskServerType.SERVICE:
-                # TODO What if we have forward slash in the task name?
-                # TODO We don't yet auto-generate new Services that could be easily called
-                pass
+                elif task_specs.task_server_type == TaskServerType.SERVICE:
+                    # TODO What if we have forward slash in the task name?
+                    TaskServiceServer(
+                        node=self,
+                        task_specs=task_specs,
+                        task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX,
+                        execute_task_cb=self.execute_task,
+                    )
 
     def setup_system_tasks(self):
         """Create servers for system tasks."""
-        stop_topic = "_task_manager/system/stop"  # Create the ROS service as a hidden topic
+        stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
+        cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
+        mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
+
+        if not self._enable_task_servers:
+            # Make services hidden. Actions cannot be hidden in a same way as services are,
+            # so Missions are always public.
+            stop_topic = "_" + stop_topic
+            cancel_topic = "_" + cancel_topic
+
         stop_service = StopTasksService(self, active_tasks=self.active_tasks)
         self.create_service(
             StopTasks, stop_topic, callback=stop_service.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
         )
-        self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
 
-        cancel_topic = "_task_manager/system/cancel_task"  # Create the ROS service as a hidden topic
         cancel_service = CancelTasksService(self, active_tasks=self.active_tasks)
         self.create_service(
             CancelTasks,
@@ -155,12 +170,12 @@ class TaskManager(Node):
             callback=cancel_service.service_cb,
             callback_group=MutuallyExclusiveCallbackGroup(),
         )
-        self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
 
-        mission = Mission(
-            self, task_topic_prefix=self.task_registrator.TASK_TOPIC_PREFIX, execute_task_cb=self.execute_task
-        )
-        self.known_tasks["system/mission"] = mission.get_task_specs()
+        mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
+
+        self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
+        self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
+        self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
@@ -177,7 +192,7 @@ class TaskManager(Node):
 
         return response
 
-    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle):
+    def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None) -> ExecuteTask.Result:
         """Execute a single task."""
         if request.task_id == "":
             request.task_id = str(uuid.uuid4())
@@ -247,13 +262,13 @@ class TaskManager(Node):
         return task_client, error_code
 
     @staticmethod
-    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle):
+    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None) -> Tuple[TaskStatus, str]:
         """Waits for the running task to finish.
 
         :raises CancelTaskFailedError: If the task cancellation fails
         """
         while rclpy.ok() and not task_client.goal_done.is_set():
-            if goal_handle.is_cancel_requested:
+            if goal_handle and goal_handle.is_cancel_requested:
                 task_client.cancel_task()
                 break
             time.sleep(1 / 50)

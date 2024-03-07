@@ -227,6 +227,7 @@ class TaskManagerNodeParams:
     def get_params(self):
         """Returns the Task Manager parameters."""
         self._params.append(Parameter(name="tasks", value=self._tasks))
+        self._params.append(Parameter(name="enable_task_servers", value=True))
         return self._params
 
 

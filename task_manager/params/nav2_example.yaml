@@ -20,3 +20,5 @@ task_manager:
       blocking: True
       cancel_on_stop: True
       reentrant: False
+
+    enable_task_servers: False
