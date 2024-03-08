@@ -74,7 +74,10 @@ Task Manager provides a way to combine multiple tasks into a larger Mission. Thi
 - Mission is just another task that will be active in addition to its subtasks.
 - All the subtasks will execute as independent tasks: Their results are published in the same way to `/task_manager/results` as for normal tasks.
 - Mission reports all the subtask statuses in the mission result. Subtask results are not published here.
-- If any of these subtasks fail, the entire mission is considered to have failed. Additionally, by setting `allow_skipping` field for a subtask, it can be skipped if there is a failure during execution.
+- If any of these subtasks encounter a failure, the entire mission is deemed unsuccessful. Furthermore, a subtask can be designated as skippable by setting the `allow_skipping` field, enabling it to be bypassed in case of execution failure.
+
+
+
 
 
 Mission can be started by calling `system/mission` task.
@@ -94,12 +97,18 @@ Task manager provides a `system/stop` task, which can be called to stop all the 
 
 
 ## Examples
-Examples can be found in [examples](examples) folder for:
+Examples and their run instructions can be found in [examples](examples) folder for:
 - Task execution, tracking and Missions
 - Nav2 example configuration
+
+<p align="center">
+<img src="images/nav2_example_mission.drawio.png" alt="drawing" width="600"/> <br>
+<em>Task and Mission setup used in Nav2 examples </em>
+</p>
+
 <p align="center">
 <img src="images/nav2_task_manager_example.gif" alt="drawing" width="1200"/> <br>
-<em>Task Manager example usage for Nav2 on Turtlebot </em>
+<em>Turtlebot 3 executing a navigation task, a spin task and a Mission that combines many of these tasks.</em>
 </p>
 
 ## Public API
