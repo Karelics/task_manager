@@ -38,4 +38,4 @@ services:
       - ../../task_manager:/ros2_ws/src/task_manager/
       - ../../task_manager_msgs:/ros2_ws/src/task_manager_msgs/
       - ../../examples:/examples/
-    command: ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_manager/params/nav2_example.yaml
+    command: ros2 launch task_manager task_manager.launch.py params_file:=/examples/nav2_example_params.yaml
