@@ -20,4 +20,22 @@ services:
       - QT_X11_NO_MITSHM=1
       - TURTLEBOT3_MODEL=waffle
       - GAZEBO_MODEL_PATH=/home/user/.gazebo/models:/opt/ros/humble/share/turtlebot3_gazebo/models
+      - ROS_DOMAIN_ID=42  # Not to conflict with the main Task Manager
     command: ros2 launch nav2_bringup tb3_simulation_launch.py headless:=False
+
+  task_manager:
+    image: task_manager
+    build:
+      context: ../../
+      dockerfile: docker/task_manager/Dockerfile
+    container_name: task_manager_nav2_example
+    network_mode: host
+    stdin_open: true
+    tty: true
+    environment:
+      - ROS_DOMAIN_ID=42  # Not to conflict with the main Task Manager
+    volumes:
+      - ../../task_manager:/ros2_ws/src/task_manager/
+      - ../../task_manager_msgs:/ros2_ws/src/task_manager_msgs/
+      - ../../examples:/examples/
+    command: ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_manager/params/nav2_example.yaml

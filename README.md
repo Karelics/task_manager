@@ -52,10 +52,20 @@ Active tasks list can be useful for example to:
 - display all the currently active tasks on the robot in the UI,
 - track task starts and ends to execute some custom logic, for example to record rosbags automatically during tasks or to display visual and sound effects on the robot.
 
+<p align="center">
+<img src="images/active_tasks.png" alt="drawing" width="500"/> <br>
+<em>An example of published active tasks</em>
+</p>
+
 ### Result tracking <a name="result-tracking"></a>
 Results for all the tasks are published to `/task_manager/results` topic. This makes it very easy to send the results forward for example to the Cloud or UI, no matter where the task was started from. Task results are always json-formatted.
 
 Note that the task's result can be an empty json `"{}"` if there was an error during task parsing.
+
+<p align="center">
+<img src="images/task_result.png" alt="drawing" width="500"/> <br>
+<em>An example of published task result</em>
+</p>
 
 ### Missions <a name="missions"></a>
 
@@ -64,11 +74,14 @@ Task Manager provides a way to combine multiple tasks into a larger Mission. Thi
 - Mission is just another task that will be active in addition to its subtasks.
 - All the subtasks will execute as independent tasks: Their results are published in the same way to `/task_manager/results` as for normal tasks.
 - Mission reports all the subtask statuses in the mission result. Subtask results are not published here.
+- If any of these subtasks fail, the entire mission is considered to have failed. Additionally, by setting `allow_skipping` field for a subtask, it can be skipped if there is a failure during execution.
+
 
 Mission can be started by calling `system/mission` task.
 
 <p align="center">
-<img src="images/mission.jpg" alt="drawing" width="800"/>
+<img src="images/mission.jpg" alt="drawing" width="800"/> <br>
+<em>Example UI implementation for displaying a Mission that consists of "Navigation" and "Take Photo" tasks.</em>
 </p>
 
 ### Task Cancelling <a name="task-cancelling"></a>
@@ -78,6 +91,16 @@ Tasks that are implemented using ROS Services cannot be cancelled due to their n
 
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
+
+
+## Examples
+Examples can be found in [examples](examples) folder for:
+- Task execution, tracking and Missions
+- Nav2 example configuration
+<p align="center">
+<img src="images/nav2_task_manager_example.gif" alt="drawing" width="1200"/> <br>
+<em>Task Manager example usage for Nav2 on Turtlebot </em>
+</p>
 
 ## Public API
 
@@ -118,30 +141,42 @@ The following tasks are available by default from the Task Manager
 
 The parameters that have their default as "-" are mandatory.
 
-## Installation
-### Docker
+## Getting started
+### Docker container
+We recommend using Docker for Task Manager deployment, to run it in an isolated container that has all the required dependencies.
+
 Prerequisites:
-- Docker and Docker Compose installed in the system
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
 
-Run in the current repository location:
+1. Run in the repository root:
 ```
-cd docker/task_manager/
-docker compose up
+docker compose -f docker/task_manager/docker-compose.yaml run --build task_manager
 ```
 
-Verify that everything works correctly by running tests in a separate terminal:
+(Optional) Verify the functionality by running the tests:
 ```
-docker exec -it task_manager bash
 python3 -m pytest /ros2_ws/src/task_manager/test/
 ```
 
-Create a new parameter file declaring your tasks, and you are ready to launch the Task Manager:
+2. Create a new parameter file declaring your tasks and launch the Task Manager. Replace the `params_file` path with your newly created parameters file path.
 ```
 ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_manager/params/task_manager_defaults.yaml
 ```
 
+## Roadmap
+
+The following features are planned as future enhancements for Task Manager:
+- Task scheduling
+- Task pausing and resuming
+- Feedback topic for tasks
+- Timestamps, for tracking task start and end times
 
 ## Maintainers
 
 Task Manager is maintained by Karelics Oy. Current active maintainers:
 - [Janne Karttunen](https://www.linkedin.com/in/janne-karttunen-a22375209/)
+
+## Acknowledgements
+
+The initial version of the Task Manager was developed at [Karelics Oy](https://karelics.fi/). This project came to life through the efforts of the following individuals, who contributed to its design, implementation, testing, and maintenance: [Janne Karttunen](https://www.linkedin.com/in/janne-karttunen-a22375209/), [George-Cosmin Porusniuc](https://www.linkedin.com/in/george-cosmin-porusniuc-89019a168/), [Joni Pöllänen](https://www.linkedin.com/in/joni-p%C3%B6ll%C3%A4nen-a05378139/), [Taneli Korhonen](https://www.linkedin.com/in/taneli-korhonen-669100177/), [Leonardo Wellausen](https://www.linkedin.com/in/lowellausen/), [Mart Moerdijk](https://www.linkedin.com/in/martmoerdijk/) and [Pekka Myller](https://www.linkedin.com/in/pekka-myller-68a7301b9/).
