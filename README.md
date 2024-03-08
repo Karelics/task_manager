@@ -76,10 +76,6 @@ Task Manager provides a way to combine multiple tasks into a larger Mission. Thi
 - Mission reports all the subtask statuses in the mission result. Subtask results are not published here.
 - If any of these subtasks encounter a failure, the entire mission is deemed unsuccessful. Furthermore, a subtask can be designated as skippable by setting the `allow_skipping` field, enabling it to be bypassed in case of execution failure.
 
-
-
-
-
 Mission can be started by calling `system/mission` task.
 
 <p align="center">
