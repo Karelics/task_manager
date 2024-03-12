@@ -1,9 +1,7 @@
-name: Task Manager CI pipeline
-#on:
-#  release:
-#    types: [created]
-on: [pull_request]
-
+name: Build and push a release
+on:
+  release:
+    types: [created]
 
 env:
   REGISTRY: ghcr.io
@@ -38,5 +36,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      #- name: Build the Docker image
-      #  run: docker compose -f docker/task_manager/docker-compose.yaml build
