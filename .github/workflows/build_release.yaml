@@ -1,8 +1,7 @@
 name: Build and push a release
-on: [pull_request]
-#on:
-#  release:
-#    types: [created]
+on:
+  release:
+    types: [created]
 
 env:
   REGISTRY: ghcr.io
