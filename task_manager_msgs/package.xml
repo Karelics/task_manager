@@ -4,7 +4,7 @@
   <name>task_manager_msgs</name>
   <version>2.0.0</version>
   <description>Task manager message interfaces</description>
-  <maintainer email="janne.karttunen@karelics.fi">Janne Karttunen</maintainer>
+  <maintainer email="janne.a.karttunen@gmail.com">Janne Karttunen</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
