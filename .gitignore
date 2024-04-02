@@ -5,6 +5,7 @@
 
 .pre_commit_cache/
 .idea/*
+.vscode
 .cache/*
 /venv
 
