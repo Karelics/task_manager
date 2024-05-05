@@ -9,8 +9,8 @@
 .cache/*
 /venv
 
-gazebo_init/*
-!gazebo_init/README.md
+**/gazebo_init/*
+!**/gazebo_init/README.md
 
 *IfcConvert
 **/__pycache__/
