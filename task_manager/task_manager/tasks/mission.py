@@ -81,15 +81,13 @@ class Mission:
             mission_result.skipped = False
 
             if subtask_result.task_status != TaskStatus.DONE:
-                if subtask.allow_skipping:
+                if subtask.allow_skipping and not goal_handle.is_cancel_requested:
                     mission_result.skipped = True
                     continue
 
-                if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
-                    # Need to also check if the cancel was requested. If the goal was cancelled
-                    # through a system task, we cannot set the status to be cancelled and must abort instead.
+                if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
-                else:  # Could be ERROR or IN_PROGRESS if the goal couldn't be cancelled
+                else:
                     goal_handle.abort()
                 return result
 
@@ -102,7 +100,7 @@ class Mission:
         return TaskSpecs(
             task_name="system/mission",
             blocking=False,
-            cancel_on_stop=False,
+            cancel_on_stop=True,
             topic=mission_topic,
             cancel_reported_as_success=False,
             reentrant=False,
