@@ -87,7 +87,7 @@ class Mission:
 
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
-                else:
+                else:  # If mission is not cancelled but a subtask fail, we abort the mission
                     goal_handle.abort()
                 return result
 
