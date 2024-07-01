@@ -17,7 +17,6 @@
 import uuid
 from typing import Callable
 
-from icecream import ic
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
