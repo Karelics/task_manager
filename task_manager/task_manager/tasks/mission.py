@@ -17,6 +17,7 @@
 import uuid
 from typing import Callable
 
+from icecream import ic
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -85,9 +86,13 @@ class Mission:
                     mission_result.skipped = True
                     continue
 
-                if goal_handle.is_cancel_requested:
+                # If the subtask has been cancelled together with the mission, we cancel the mission
+                # If the subtask has been cancelled/failed/indefinitely in progress, we abort the mission
+                # If the mission has been cancelled but the subtask is failed/indefinitely in progress,
+                # we abort the mission
+                if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
                     goal_handle.canceled()
-                else:  # If mission is not cancelled but a subtask fail, we abort the mission
+                else:
                     goal_handle.abort()
                 return result
 
