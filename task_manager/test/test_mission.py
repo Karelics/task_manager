@@ -85,8 +85,7 @@ class MissionUnittest(unittest.TestCase):
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
 
     def test_mission_not_successful_skipping_task(self):
-        """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
-        Mission is cancelled."""
+        """Tests that the mission is properly cancelled or aborted when a subtask is skipped."""
         request = MissionAction.Goal(
             subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}")]
         )
