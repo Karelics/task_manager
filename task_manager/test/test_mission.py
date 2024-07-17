@@ -84,8 +84,33 @@ class MissionUnittest(unittest.TestCase):
             mock_goal_handle.abort.assert_called_once()
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
 
+    def test_mission_not_successful_skipping_task(self):
+        """Tests that the mission is properly cancelled or aborted when a subtask is skipped."""
+        request = MissionAction.Goal(
+            subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}")]
+        )
+        mock_goal_handle = Mock(request=request)
+        mock_goal_handle.is_cancel_requested = True
+
+        with self.subTest("mission_canceled"):
+            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
+                task_status=TaskStatus.CANCELED, task_result="{}"
+            )
+            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
+            mock_goal_handle.canceled.assert_called_once()
+            self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
+
+        mock_goal_handle.reset_mock()
+        with self.subTest("mission_error"):
+            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
+                task_status=TaskStatus.ERROR, task_result="{}"
+            )
+            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
+            mock_goal_handle.abort.assert_called_once()
+            self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
+
     def test_skipping_subtask(self):
-        """Tests that even tho a subtask is aborted, no error is raised when the task is allowed to be skipped."""
+        """Tests that even though a subtask is aborted, no error is raised when the task is allowed to be skipped."""
         request = MissionAction.Goal()
         request.subtasks = [
             SubtaskGoal(task_name="test/mock_subtask", task_data="{}", allow_skipping=True, task_id="123")
@@ -97,8 +122,9 @@ class MissionUnittest(unittest.TestCase):
         expected_result.mission_results = [
             SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.ERROR, skipped=True, task_id="123")
         ]
-
-        result = self.mission.execute_cb(goal_handle=Mock(request=request))
+        mock_goal_handle = Mock(request=request)
+        mock_goal_handle.is_cancel_requested = False
+        result = self.mission.execute_cb(goal_handle=mock_goal_handle)
         self.assertEqual(result, expected_result)
 
 
