@@ -26,7 +26,8 @@ from rclpy.client import Client
 from rclpy.node import Node
 
 # ROS messages
-from action_msgs.msg import GoalInfo, GoalStatus
+from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
@@ -94,6 +95,7 @@ class ActionTaskClient(TaskClient):
         self._client: ActionClient = action_clients[task_specs.task_name]
 
         self._goal_handle: Optional[ClientGoalHandle] = None
+        self._result_future: Optional[Future] = None
         self.server_wait_timeout = 10.0
         self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
 
@@ -147,8 +149,8 @@ class ActionTaskClient(TaskClient):
             raise TaskStartError(f"Goal was not accepted by the action server for the task {self.task_specs.task_name}")
 
         self.task_details.status = TaskStatus.IN_PROGRESS
-        future: Future = self._goal_handle.get_result_async()
-        future.add_done_callback(self._goal_done_cb)
+        self._result_future = self._goal_handle.get_result_async()
+        self._result_future.add_done_callback(self._goal_done_cb)
 
     def cancel_task(self) -> None:
         """
@@ -157,17 +159,8 @@ class ActionTaskClient(TaskClient):
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         done_states = [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED]
         if self._goal_handle.status not in done_states:
-            # There seems to be a bug in rclpy, making the return code to be 0 (ERROR_NONE),
-            # no matter if the cancel was rejected or accepted. So checking instead if the
-            # goal is within the cancelling goals.
-            goals_canceling = self._request_canceling(self.cancel_task_timeout)
-            goal_ids_cancelling = [goal_info.goal_id for goal_info in goals_canceling]
-            if self._goal_handle.goal_id not in goal_ids_cancelling:
-                self._node.get_logger().error(
-                    f"Couldn't cancel the task. Action server {self.task_specs.topic} did not "
-                    f"accept to cancel the goal."
-                )
-                raise CancelTaskFailedError("Couldn't cancel the task!")
+            response = self._request_canceling(self.cancel_task_timeout)
+            self._handle_cancel_response(response)
 
         # Wait until _goal_done_cb is called and callbacks have been notified
         if not self.goal_done.wait(timeout=self.cancel_task_timeout):
@@ -176,7 +169,7 @@ class ActionTaskClient(TaskClient):
                 f"Is the task cancel implemented correctly?"
             )
 
-    def _request_canceling(self, timeout: float) -> List[GoalInfo]:
+    def _request_canceling(self, timeout: float) -> CancelGoal.Response:
         future = self._goal_handle.cancel_goal_async()
         try:
             self._wait_for_future_to_complete(future, timeout=timeout)
@@ -185,7 +178,41 @@ class ActionTaskClient(TaskClient):
                 f"Timeout while waiting response to cancel request from server {self.task_specs.task_name}: {str(e)}."
             )
             raise CancelTaskFailedError("Cancel request timed out.") from e
-        return future.result().goals_canceling
+        return future.result()
+
+    def _handle_cancel_response(self, response: CancelGoal.Response) -> None:
+        """Handles the response from the cancel request.
+
+        :raises UnknownIdAtCancelTaskError: If the goal with known id does not exist
+        :raises GoalAlreadyTerminatedAtCancelTaskError: If the goal has already terminated
+        :raises CancelTaskFailedError: If the cancel request fails
+        """
+        # There seems to be a bug in rclpy, making the return code to be 0 (ERROR_NONE),
+        # no matter if the cancel was rejected or accepted. So checking instead if the
+        # goal is within the cancelling goals.
+        if response.return_code == CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID:
+            self._node.get_logger().info(
+                f"Action server {self.task_specs.topic} did not recognize the goal id. "
+                f"Maybe server has restarted during the task execution and the goal no longer exists. "
+                f"Considering the task canceled."
+            )
+            self._result_future.cancel()
+
+        elif response.return_code == CancelGoal.Response.ERROR_GOAL_TERMINATED:
+            self._node.get_logger().info(
+                f"Action server {self.task_specs.topic} did not accept to cancel the goal. "
+                f"Goal seems to have already finished. Considering the task canceled."
+            )
+            self._result_future.cancel()
+
+        else:
+            goal_ids_cancelling = [goal_info.goal_id for goal_info in response.goals_canceling]
+            if self._goal_handle.goal_id not in goal_ids_cancelling:
+                self._node.get_logger().error(
+                    f"Couldn't cancel the task. Action server {self.task_specs.topic} did not "
+                    f"accept to cancel the goal."
+                )
+                raise CancelTaskFailedError("Couldn't cancel the task!")
 
     def _goal_done_cb(self, future: Future) -> None:
         """Called when the Action Client's goal finishes. Updates the task status and notifies callbacks further the
@@ -193,9 +220,20 @@ class ActionTaskClient(TaskClient):
 
         :param future: Future object giving the result of the action call.
         """
+        if future.cancelled():
+            self.task_details.status = TaskStatus.CANCELED
+            self.task_details.result = self.task_specs.msg_interface.Result()
+        else:
+            self._fill_in_task_details(future)
+
+        for callback in self._task_done_callbacks:
+            callback(self.task_specs, self.task_details)
+        self.goal_done.set()
+
+    def _fill_in_task_details(self, future: Future) -> None:
+        """Fills in the task details based on the future result."""
         result = future.result()
         goal_status = result.status
-
         try:
             end_goal_status = ros_goal_status_to_task_status(goal_status)
         except RuntimeError as e:
@@ -208,12 +246,7 @@ class ActionTaskClient(TaskClient):
                 self.task_details.status = TaskStatus.DONE
             else:
                 self.task_details.status = end_goal_status
-
         self.task_details.result = result.result
-
-        for callback in self._task_done_callbacks:
-            callback(self.task_specs, self.task_details)
-        self.goal_done.set()
 
     @staticmethod
     def _wait_for_future_to_complete(future: Future, timeout: Optional[float]) -> None:
