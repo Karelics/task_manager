@@ -18,6 +18,7 @@ import time
 
 # ROS
 import rclpy
+from rclpy.service import Service
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.node import Node
@@ -27,7 +28,7 @@ from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
 
-def create_fib_action_server(node, action_name):
+def create_fib_action_server(node: Node, action_name: str) -> ActionServer:
     """Action server that execution time depends on the given Fibonacci goal."""
     return ActionServer(
         node=node,
@@ -97,7 +98,7 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
     return result
 
 
-def create_add_two_ints_service(node: Node, service_name):
+def create_add_two_ints_service(node: Node, service_name: str) -> Service:
     """Creates a AddTwoInts service."""
 
     def service_callback(req: AddTwoInts.Request, result: AddTwoInts.Response) -> AddTwoInts.Response:

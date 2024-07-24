@@ -213,7 +213,9 @@ class TestActionTaskClient(unittest.TestCase):
         client.start_task_async(Fibonacci.Goal(order=1))
         client.goal_done.wait(timeout=1)
         handle = ClientGoalHandle(
-            goal_id=client._goal_handle.goal_id, action_client=client._client, goal_response=Fibonacci.Result
+            goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
+            action_client=client._client,
+            goal_response=Fibonacci.Result
         )
         client._goal_handle = handle
         client.cancel_task()
@@ -225,16 +227,18 @@ class TestActionTaskClient(unittest.TestCase):
         Checks that goal_cb is ran only once per goal and we do not throw error for the cancel.
         """
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        client.start_task_async(Fibonacci.Goal(order=1))
+        client.start_task_async(Fibonacci.Goal(order=0))
         client.goal_done.wait(timeout=1)
 
         # Reset state. Simulates a state where goal has finished but the response did not arrive to task manager
         handle = ClientGoalHandle(
-            goal_id=client._goal_handle.goal_id, action_client=client._client, goal_response=Fibonacci.Result
+            goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
+            action_client=client._client,
+            goal_response=Fibonacci.Result
         )
         client._goal_handle = handle
-        client._result_future._done = False
-        client._result_future.add_done_callback(client._goal_done_cb)
+        client._result_future._done = False  # type: ignore[union-attr]
+        client._result_future.add_done_callback(client._goal_done_cb)  # type: ignore[union-attr]
         client.goal_done.clear()
 
         client.cancel_task()

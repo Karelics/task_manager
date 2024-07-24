@@ -66,6 +66,8 @@ class TaskClient(ABC):
 class ActionTaskClient(TaskClient):
     """Task client that keeps track of a single Action task."""
 
+    DONE_STATES = [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED]
+
     def __init__(
         self,
         node: Node,
@@ -153,12 +155,15 @@ class ActionTaskClient(TaskClient):
         self._result_future.add_done_callback(self._goal_done_cb)
 
     def cancel_task(self) -> None:
-        """
+        """Cancel the task.
+
         :raises CancelTaskFailedError: If cancel request fails, due to timeout or other
         """
+        if not self._goal_handle:
+            raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
+
         # In some rare cases the goal might already be done at this point. If not, cancel it.
-        done_states = [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED]
-        if self._goal_handle.status not in done_states:
+        if self._goal_handle.status not in self.DONE_STATES:
             response = self._request_canceling(self.cancel_task_timeout)
             self._handle_cancel_response(response)
 
@@ -170,6 +175,14 @@ class ActionTaskClient(TaskClient):
             )
 
     def _request_canceling(self, timeout: float) -> CancelGoal.Response:
+        """Requests canceling for the goal and returns the cancel response.
+
+        :raises CancelTaskFailedError: If the cancel request timed out
+        :param timeout: Time to wait for cancel request to pass
+        :return: CancelGoal.Response
+        """
+        if not self._goal_handle:
+            raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
         future = self._goal_handle.cancel_goal_async()
         try:
             self._wait_for_future_to_complete(future, timeout=timeout)
@@ -196,6 +209,8 @@ class ActionTaskClient(TaskClient):
                 f"Maybe server has restarted during the task execution and the goal no longer exists. "
                 f"Considering the task canceled."
             )
+            if not self._result_future:
+                raise CancelTaskFailedError("Couldn't cancel the task, action result future does not exist!")
             self._result_future.cancel()
 
         elif response.return_code == CancelGoal.Response.ERROR_GOAL_TERMINATED:
@@ -203,9 +218,13 @@ class ActionTaskClient(TaskClient):
                 f"Action server {self.task_specs.topic} did not accept to cancel the goal. "
                 f"Goal seems to have already finished. Considering the task canceled."
             )
+            if not self._result_future:
+                raise CancelTaskFailedError("Couldn't cancel the task, action result future does not exist!")
             self._result_future.cancel()
 
         else:
+            if not self._goal_handle:
+                raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
             goal_ids_cancelling = [goal_info.goal_id for goal_info in response.goals_canceling]
             if self._goal_handle.goal_id not in goal_ids_cancelling:
                 self._node.get_logger().error(
