@@ -215,7 +215,7 @@ class TestActionTaskClient(unittest.TestCase):
         handle = ClientGoalHandle(
             goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
             action_client=client._client,
-            goal_response=Fibonacci.Result
+            goal_response=Fibonacci.Result,
         )
         client._goal_handle = handle
         client.cancel_task()
@@ -234,7 +234,7 @@ class TestActionTaskClient(unittest.TestCase):
         handle = ClientGoalHandle(
             goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
             action_client=client._client,
-            goal_response=Fibonacci.Result
+            goal_response=Fibonacci.Result,
         )
         client._goal_handle = handle
         client._result_future._done = False  # type: ignore[union-attr]

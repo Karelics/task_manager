@@ -33,7 +33,7 @@ from example_interfaces.action import Fibonacci
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
-from task_manager.task_client import ActionTaskClient, ServiceTaskClient, CancelTaskFailedError
+from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, ServiceTaskClient
 from task_manager.task_details import TaskDetails
 
 # pylint: disable=protected-access

@@ -18,10 +18,10 @@ import time
 
 # ROS
 import rclpy
-from rclpy.service import Service
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.node import Node
+from rclpy.service import Service
 
 # ROS messages
 from example_interfaces.action import Fibonacci
