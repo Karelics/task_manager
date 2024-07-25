@@ -38,7 +38,7 @@ from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, Ta
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code, protected-access
 # The init is very similar to test_service_task_client, but it is fine in this case
 
 
