@@ -201,8 +201,8 @@ class TestActionTaskClient(unittest.TestCase):
         client.cancel_task()
         self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
 
-    def test_goal_cb_called_only_once(self) -> None:
-        """Checks that goal_cb is ran only once per goal and we do not throw error for the cancel."""
+    def test_goal_done_cb_called_only_once(self) -> None:
+        """Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel."""
 
         def execute_cb(_goal_handle):
             _goal_handle.succeed()

@@ -196,8 +196,6 @@ class ActionTaskClient(TaskClient):
     def _handle_cancel_response(self, response: CancelGoal.Response) -> None:
         """Handles the response from the cancel request.
 
-        :raises UnknownIdAtCancelTaskError: If the goal with known id does not exist
-        :raises GoalAlreadyTerminatedAtCancelTaskError: If the goal has already terminated
         :raises CancelTaskFailedError: If the cancel request fails
         """
         # There seems to be a bug in rclpy, making the return code to be 0 (ERROR_NONE),
@@ -210,7 +208,7 @@ class ActionTaskClient(TaskClient):
                 f"Considering the task canceled."
             )
             if not self._result_future:
-                raise CancelTaskFailedError("Couldn't cancel the task, action result future does not exist!")
+                raise CancelTaskFailedError("Couldn't cancel the task result future since it does not exist!")
             self._result_future.cancel()
 
         elif response.return_code == CancelGoal.Response.ERROR_GOAL_TERMINATED:
@@ -234,8 +232,7 @@ class ActionTaskClient(TaskClient):
                 raise CancelTaskFailedError("Couldn't cancel the task!")
 
     def _goal_done_cb(self, future: Future) -> None:
-        """Called when the Action Client's goal finishes. Updates the task status and notifies callbacks further the
-        other callbacks.
+        """Called when the Action Client's goal finishes. Updates the task status and invokes task done callbacks.
 
         :param future: Future object giving the result of the action call.
         """
