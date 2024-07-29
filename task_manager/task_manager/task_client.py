@@ -217,7 +217,7 @@ class ActionTaskClient(TaskClient):
                 f"Goal seems to have already finished. Considering the task canceled."
             )
             if not self._result_future:
-                raise CancelTaskFailedError("Couldn't cancel the task, action result future does not exist!")
+                raise CancelTaskFailedError("Couldn't cancel the task result future since it does not exist!")
             self._result_future.cancel()
 
         else:

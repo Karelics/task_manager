@@ -224,7 +224,7 @@ class TestActionTaskClient(unittest.TestCase):
     def test_cancel_task_goal_terminated_before_cancel(self) -> None:
         """Case where the goal has already been finished when trying to cancel it.
 
-        Checks that goal_cb is ran only once per goal and we do not throw error for the cancel.
+        Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel.
         """
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
         client.start_task_async(Fibonacci.Goal(order=0))
