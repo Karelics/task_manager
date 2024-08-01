@@ -95,7 +95,7 @@ class ActionTaskClient(TaskClient):
 
         self._goal_handle: Optional[ClientGoalHandle] = None
         self.server_wait_timeout = 10.0
-        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
+        self.cancel_task_timeout = task_specs.cancel_timeout  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:

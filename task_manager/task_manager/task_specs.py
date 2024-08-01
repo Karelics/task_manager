@@ -39,3 +39,4 @@ class TaskSpecs:
     cancel_reported_as_success: bool = False
     reentrant: bool = False
     service_success_field: str = ""
+    cancel_timeout: float = 5.0

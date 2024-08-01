@@ -123,6 +123,7 @@ class TaskManager(Node):
                 msg_interface=msg_interface,
                 task_server_type=detect_task_server_type(msg_interface),
                 service_success_field=service_success_field,
+                cancel_timeout=self.declare_parameter(f"{task}.cancel_timeout", 5.0).value,
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
