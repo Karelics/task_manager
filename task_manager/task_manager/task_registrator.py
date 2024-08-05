@@ -76,8 +76,6 @@ class TaskRegistrator:
         self._action_clients: Dict[str, ActionClient] = {}  # [task_name, ActionClient]
         self._service_clients: Dict[str, Client] = {}  # [task_name, Client]
 
-        self.cancel_task_timeout = 5
-
     def start_new_task(self, request: ExecuteTask.Goal, task_specs: TaskSpecs) -> TaskClient:
         """Starts a task and cancels any conflicting tasks.
 
@@ -118,7 +116,6 @@ class TaskRegistrator:
             )
             msg_interface = task_specs.msg_interface.Request()
 
-        task_client.cancel_task_timeout = self.cancel_task_timeout
         task_client.register_done_callback(self._task_done_cb)
 
         task_goal_message = populate_msg(task_data=request.task_data, msg_interface=msg_interface)

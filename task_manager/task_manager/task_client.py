@@ -267,7 +267,7 @@ class ServiceTaskClient(TaskClient):
             )
 
         self._client = self._service_clients[task_specs.task_name]
-        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
+        self.cancel_task_timeout = task_specs.cancel_timeout  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:
