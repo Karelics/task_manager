@@ -218,6 +218,7 @@ class TaskManager(Node):
                     task_id=request.task_id,
                     task_name=request.task_name,
                     task_status=response.task_status,
+                    error_code=response.error_code,
                     source=request.source,
                     task_result=response.task_result,
                 )

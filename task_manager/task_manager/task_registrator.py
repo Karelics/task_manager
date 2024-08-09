@@ -143,7 +143,7 @@ class TaskRegistrator:
         active_task_clients = self._active_tasks.get_active_tasks_by_name(task_name)
         if not active_task_clients:
             return
-
+        self._node.get_logger().info(f"Detected running task of the same type '{task_name}', canceling it.")
         if len(active_task_clients) > 1:
             self._node.get_logger().error("Found multiple task clients with the same name!")
 
@@ -164,6 +164,7 @@ class TaskRegistrator:
             return
 
         try:
+            self._node.get_logger().info("Detected running blocking task, canceling it.")
             task_client.cancel_task()
         except CancelTaskFailedError as e:
             raise TaskStartError(

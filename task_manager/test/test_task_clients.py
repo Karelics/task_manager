@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # ROS
 from rclpy.node import Node
@@ -26,13 +26,14 @@ from rosbridge_library.internal.message_conversion import extract_values
 
 # ROS messages
 from action_msgs.msg import GoalStatus
+from action_msgs.srv import CancelGoal
 from example_interfaces.action import Fibonacci
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
-from task_manager.task_client import ActionTaskClient, ServiceTaskClient
+from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, ServiceTaskClient
 from task_manager.task_details import TaskDetails
 
 # pylint: disable=protected-access
@@ -87,6 +88,31 @@ class TestActionTaskClient(unittest.TestCase):
         # As a workaround, use extract_values-function to get the result in json format
         result = extract_values(task_client.task_details.result)
         self.assertEqual(result, {"sequence": []}, msg=str(task_client.task_details.result))
+
+    def test_cancel_task_no_goal_handle(self):
+        """Tests that we do not crash if goal handle does not exist."""
+        task_client = get_action_task_client("task_1")
+        self.assertRaises(CancelTaskFailedError, task_client.cancel_task)
+
+    def test_request_canceling_no_goal_handle(self):
+        """Tests that we do not crash if goal handle does not exist."""
+        task_client = get_action_task_client("task_1")
+        self.assertRaises(CancelTaskFailedError, task_client._request_canceling, 1)
+
+    @patch("task_manager.task_client.ActionTaskClient._request_canceling")
+    def test_cancel_task_no_result_future(self, mock_request_canceling: Mock):
+        """Tests that we do not crash if result future does not exist."""
+        cases = [
+            {"case": "Unknown goal id", "return_code": CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID},
+            {"case": "Goal terminated", "return_code": CancelGoal.Response.ERROR_GOAL_TERMINATED},
+        ]
+
+        task_client = get_action_task_client("task_1")
+        task_client._goal_handle = Mock()
+        for case in cases:
+            mock_request_canceling.return_value = CancelGoal.Response(return_code=case["return_code"])
+            with self.subTest(case["case"]):
+                self.assertRaises(CancelTaskFailedError, task_client.cancel_task)
 
 
 class ServiceTaskClientUnittests(unittest.TestCase):

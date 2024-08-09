@@ -179,8 +179,8 @@ The following features are planned as future enhancements for Task Manager:
 
 ## Maintainers
 
-Task Manager is maintained by Karelics Oy. Current active maintainers:
 - [Janne Karttunen](https://www.linkedin.com/in/janne-karttunen-a22375209/)
+- [Karelics Oy](https://karelics.fi/)
 
 ## Acknowledgements
 

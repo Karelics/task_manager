@@ -31,6 +31,7 @@ RUN sudo apt-get update && \
 
 # Source ROS workspace automatically when new terminal is opened
 RUN sudo echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
+RUN sudo echo ". /usr/share/gazebo/setup.bash" >> ~/.bashrc
 
 
 # Source ROS in the main terminal
