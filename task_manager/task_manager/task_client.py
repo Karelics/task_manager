@@ -99,7 +99,6 @@ class ActionTaskClient(TaskClient):
         self._goal_handle: Optional[ClientGoalHandle] = None
         self._result_future: Optional[Future] = None
         self.server_wait_timeout = 10.0
-        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:
@@ -164,13 +163,13 @@ class ActionTaskClient(TaskClient):
 
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         if self._goal_handle.status not in self.DONE_STATES:
-            response = self._request_canceling(self.cancel_task_timeout)
+            response = self._request_canceling(self._task_specs.cancel_timeout)
             self._handle_cancel_response(response)
 
         # Wait until _goal_done_cb is called and callbacks have been notified
-        if not self.goal_done.wait(timeout=self.cancel_task_timeout):
+        if not self.goal_done.wait(timeout=self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(
-                f"Task didn't finish within {self.cancel_task_timeout} second timeout after it was cancelled. "
+                f"Task didn't finish within {self._task_specs.cancel_timeout} second timeout after it was cancelled. "
                 f"Is the task cancel implemented correctly?"
             )
 
@@ -316,7 +315,6 @@ class ServiceTaskClient(TaskClient):
             )
 
         self._client = self._service_clients[task_specs.task_name]
-        self.cancel_task_timeout = 5.0  # Timeout to wait for task to cancel
 
     @property
     def task_details(self) -> TaskDetails:
@@ -360,9 +358,9 @@ class ServiceTaskClient(TaskClient):
             return
         self._node.get_logger().warn(
             f"Currently ongoing service call to {self._task_specs.topic} cannot be cancelled. "
-            f"Waiting for {self.cancel_task_timeout} seconds for the task to finish."
+            f"Waiting for {self._task_specs.cancel_timeout} seconds for the task to finish."
         )
-        if not self.goal_done.wait(self.cancel_task_timeout):
+        if not self.goal_done.wait(self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
 
     def _done_callback(self, future):

@@ -224,9 +224,7 @@ class TestTaskManager(TaskManagerTestNode):
     def test_blocking_task_cancelling_fails(self) -> None:
         """Sometimes blocking task cancelling might fail, for example if we try to cancel a service that executes for
         more than the cancel timeout."""
-        self.task_manager_node.task_registrator.cancel_task_timeout = 0.1
-
-        goal_handle_1 = self.start_add_two_ints_service_task(run_time_secs=1)
+        goal_handle_1 = self.start_add_two_ints_service_task(run_time_secs=2)
 
         # New blocking Service Task should cancel the previous task
         goal_handle_2 = self.start_add_two_ints_service_task(run_time_secs=1)
