@@ -163,7 +163,7 @@ class ActionTaskClient(TaskClient):
 
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         if self._goal_handle.status not in self.DONE_STATES:
-            response = self._request_canceling(self.cancel_task_timeout)
+            response = self._request_canceling(self._task_specs.cancel_timeout)
             self._handle_cancel_response(response)
 
         # Wait until _goal_done_cb is called and callbacks have been notified
