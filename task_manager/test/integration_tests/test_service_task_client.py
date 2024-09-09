@@ -137,25 +137,25 @@ class TestServiceTaskClient(unittest.TestCase):
         """
         service_clients = {}
         with self.subTest("Happy flow"):
+            self._task_specs.cancel_timeout = 2.0
             task_client = ServiceTaskClient(
                 self._node,
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
             )
-            task_client.cancel_task_timeout = 2.0
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             task_client.cancel_task()
             self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
 
         with self.subTest("Service execution takes longer than our waiting timeout is"):
+            self._task_specs.cancel_timeout = 0.5
             task_client = ServiceTaskClient(
                 self._node,
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
             )
-            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=1, b=0))
             with self.assertRaises(CancelTaskFailedError):
                 task_client.cancel_task()
@@ -165,13 +165,13 @@ class TestServiceTaskClient(unittest.TestCase):
         with self.subTest("Task had already finished when the cancel is called"):
             logger_mock = Mock()
             self._node.get_logger = Mock(return_value=logger_mock)
+            self._task_specs.cancel_timeout = 0.5
             task_client = ServiceTaskClient(
                 self._node,
                 task_details=self._task_details,
                 task_specs=self._task_specs,
                 service_clients=service_clients,
             )
-            task_client.cancel_task_timeout = 0.5
             task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
             self.assertTrue(task_client.goal_done.wait(1))
             task_client.cancel_task()

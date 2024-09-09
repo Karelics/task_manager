@@ -212,6 +212,7 @@ class TaskManagerNodeParams:
                 Parameter(name=f"{task_specs.task_name}.msg_interface", value=task_specs.msg_interface),
                 Parameter(name=f"{task_specs.task_name}.blocking", value=task_specs.blocking),
                 Parameter(name=f"{task_specs.task_name}.cancel_on_stop", value=task_specs.cancel_on_stop),
+                Parameter(name=f"{task_specs.task_name}.cancel_timeout", value=task_specs.cancel_timeout),
             ]
         )
         self._tasks.append(task_specs.task_name)
@@ -239,6 +240,7 @@ class TaskManagerNodeParams:
                 task_server_type=TaskServerType.SERVICE,
                 blocking=blocking,
                 cancel_on_stop=False,
+                cancel_timeout=1.5,
             )
         )
 

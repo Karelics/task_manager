@@ -161,8 +161,8 @@ class TestActionTaskClient(unittest.TestCase):
             sleep(0.5)
             return CancelResponse.ACCEPT
 
+        self._task_specs.cancel_timeout = 0.2
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        client.cancel_task_timeout = 0.2
 
         self.fibonacci_server.register_cancel_callback(sleep_cancel_callback)
         client.start_task_async(Fibonacci.Goal(order=5))
@@ -181,8 +181,8 @@ class TestActionTaskClient(unittest.TestCase):
             sleep(1)
             return Fibonacci.Result()
 
+        self._task_specs.cancel_timeout = 0.2
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        client.cancel_task_timeout = 0.2
         self.fibonacci_server.register_execute_callback(execute_cb)
         client.start_task_async(Fibonacci.Goal(order=0))
         with self.assertRaises(CancelTaskFailedError):
