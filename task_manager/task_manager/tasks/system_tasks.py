@@ -13,6 +13,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  ------------------------------------------------------------------
+import sys
 import time
 from abc import ABC, abstractmethod
 
@@ -20,8 +21,10 @@ from abc import ABC, abstractmethod
 import rclpy
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.clock import ClockType
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.time import Time
 
 # Task Manager messages
 from task_manager_msgs.action import Wait
@@ -147,9 +150,16 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
     def _execute_cb(self, goal_handle: ServerGoalHandle) -> Wait.Result:
         """Callback for the Wait action server."""
         duration_in_seconds = goal_handle.request.duration
-        loop_time = 0.1 if duration_in_seconds > 0.1 else duration_in_seconds
         start_time = self._node.get_clock().now()
-        end_time = start_time + Duration(nanoseconds=int(duration_in_seconds * 1e9))
+
+        # Wait indefinitely if duration is 0.0
+        if duration_in_seconds <= 0.0:
+            loop_time = 0.1
+            end_time = Time(nanoseconds=sys.maxsize, clock_type=ClockType.ROS_TIME)
+        else:
+            loop_time = 0.1 if duration_in_seconds > 0.1 else duration_in_seconds
+            end_time = start_time + Duration(nanoseconds=int(duration_in_seconds * 1e9))
+
         feedback_frequency_ns = int(1.0 * 1e9)
         last_feedback_stamp = start_time
 
@@ -166,7 +176,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             if (self._node.get_clock().now() - last_feedback_stamp).nanoseconds >= feedback_frequency_ns:
                 last_feedback_stamp = self._node.get_clock().now()
                 goal_handle.publish_feedback(
-                    Wait.Feedback(remaining_time=(end_time - last_feedback_stamp).nanoseconds / 1e9)
+                    Wait.Feedback(remaining_time=float((end_time.nanoseconds - last_feedback_stamp.nanoseconds) / 1e9))
                 )
 
             time.sleep(loop_time)

@@ -104,9 +104,9 @@ class SystemTaskTests(TaskManagerTestNode):
     def test_wait_task(self) -> None:
         """Test cases for Wait system task."""
         with self.subTest("Wait task is successful"):
-            wait_response = self.execute_wait_task(duration=0.5)
-            self.assertEqual(wait_response.result.task_status, TaskStatus.DONE)
-            self.assertEqual(wait_response.result.task_result, json.dumps({}))
+            wait_result = self.execute_wait_task(duration=0.5)
+            self.assertEqual(wait_result.result.task_status, TaskStatus.DONE)
+            self.assertEqual(wait_result.result.task_result, json.dumps({}))
 
         with self.subTest("Wait task is cancelled"):
             goal_handle = self.start_wait_task(duration=10.0, task_id="wait_cancel")
@@ -118,6 +118,32 @@ class SystemTaskTests(TaskManagerTestNode):
             self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
             self.assertEqual(wait_result.status, GoalStatus.STATUS_ABORTED)
             self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+
+        with self.subTest("Input duration is negative - Wait indefinitely"):
+            goal_handle = self.start_wait_task(duration=-1.0, task_id="wait_negative")
+            self.wait_for_task_start("wait_negative")
+
+            # Cancel the task to not wait for an eternity
+            cancel_response = self.execute_cancel_task(task_ids=["wait_negative"])
+            wait_result = goal_handle.get_result()
+
+            self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
+            # If the task would not stay waiting, the status would be DONE
+            self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+            self.assertEqual(wait_result.result.task_result, json.dumps({}))
+
+        with self.subTest("Input duration is zero - Wait indefinitely"):
+            goal_handle = self.start_wait_task(duration=0.0, task_id="wait_indef_cancel")
+            self.wait_for_task_start("wait_indef_cancel")
+
+            # Cancel the task to not wait for an eternity
+            cancel_response = self.execute_cancel_task(task_ids=["wait_indef_cancel"])
+            wait_result = goal_handle.get_result()
+
+            self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
+            # If the task would not stay waiting with duration 0.0, the status would be DONE
+            self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+            self.assertEqual(wait_result.result.task_result, json.dumps({}))
 
 
 if __name__ == "__main__":
