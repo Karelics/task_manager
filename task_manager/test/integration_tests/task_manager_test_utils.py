@@ -40,7 +40,7 @@ from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
-from task_manager_msgs.action import ExecuteTask
+from task_manager_msgs.action import ExecuteTask, Wait
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
@@ -174,6 +174,21 @@ class TaskManagerTestNode(unittest.TestCase):
         goal = ExecuteTask.Goal(task_name="system/cancel_task", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
+
+    def execute_wait_task(self, duration: float):
+        """Calls system/wait with given  time."""
+        wait_goal = Wait.Goal(duration=duration)
+        task_data = json.dumps(extract_values(wait_goal))
+        goal = ExecuteTask.Goal(task_name="system/wait", task_data=task_data, source="")
+        goal_handle = self._start_task(goal=goal)
+        return goal_handle.get_result()
+
+    def start_wait_task(self, duration: float, task_id: str = uuid.uuid4()) -> ClientGoalHandle:
+        """Starts the wait task with given duration and returns the goal handle."""
+        wait_goal = Wait.Goal(duration=duration)
+        task_data = json.dumps(extract_values(wait_goal))
+        goal = ExecuteTask.Goal(task_id=task_id, task_name="system/wait", task_data=task_data, source="")
+        return self._start_task(goal)
 
 
 class TestTasksNode(Node):

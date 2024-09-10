@@ -101,6 +101,24 @@ class SystemTaskTests(TaskManagerTestNode):
             self.assertEqual(stop_response.result.task_result, json.dumps({"success": False}))
             self.assertEqual(goal_handle.get_result().status, GoalStatus.STATUS_SUCCEEDED)
 
+    def test_wait_task(self) -> None:
+        """Test cases for Wait system task."""
+        with self.subTest("Wait task is successful"):
+            wait_response = self.execute_wait_task(duration=0.5)
+            self.assertEqual(wait_response.result.task_status, TaskStatus.DONE)
+            self.assertEqual(wait_response.result.task_result, json.dumps({}))
+
+        with self.subTest("Wait task is cancelled"):
+            goal_handle = self.start_wait_task(duration=10.0, task_id="wait_cancel")
+            self.wait_for_task_start("wait_cancel")
+
+            cancel_response = self.execute_cancel_task(task_ids=["wait_cancel"])
+            wait_result = goal_handle.get_result()
+
+            self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
+            self.assertEqual(wait_result.status, GoalStatus.STATUS_ABORTED)
+            self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+
 
 if __name__ == "__main__":
     unittest.main()

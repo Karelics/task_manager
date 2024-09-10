@@ -20,9 +20,11 @@ from abc import ABC, abstractmethod
 import rclpy
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.duration import Duration
 from rclpy.node import Node
 
 # Task Manager messages
+from task_manager_msgs.action import Wait
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
 # Task Manager
@@ -124,4 +126,67 @@ class CancelTasksService(SystemTask):
             msg_interface=CancelTasks,
             task_server_type=TaskServerType.SERVICE,
             service_success_field="success",
+        )
+
+
+class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
+    """Wait for a specified amount of time or until a cancel is called."""
+
+    def __init__(self, node: Node, topic: str):
+        self._node = node
+        self._topic = topic
+        self._server = ActionServer(
+            self._node,
+            Wait,
+            self._topic,
+            self._execute_cb,
+            cancel_callback=self._cancel_cb,
+            callback_group=MutuallyExclusiveCallbackGroup(),
+        )
+
+    def _execute_cb(self, goal_handle: ServerGoalHandle) -> Wait.Result:
+        """Callback for the Wait action server."""
+        duration_in_seconds = goal_handle.request.duration
+        loop_time = 0.1 if duration_in_seconds > 0.1 else duration_in_seconds
+        start_time = self._node.get_clock().now()
+        end_time = start_time + Duration(nanoseconds=int(duration_in_seconds * 1e9))
+        feedback_frequency_ns = int(1.0 * 1e9)
+        last_feedback_stamp = start_time
+
+        while rclpy.ok() and self._node.get_clock().now() < end_time:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return Wait.Result()
+
+            if not goal_handle.is_active:
+                goal_handle.abort()
+                return Wait.Result()
+
+            # Publish feedback
+            if (self._node.get_clock().now() - last_feedback_stamp).nanoseconds >= feedback_frequency_ns:
+                last_feedback_stamp = self._node.get_clock().now()
+                goal_handle.publish_feedback(
+                    Wait.Feedback(remaining_time=(end_time - last_feedback_stamp).nanoseconds / 1e9)
+                )
+
+            time.sleep(loop_time)
+
+        goal_handle.succeed()
+        return Wait.Result()
+
+    @staticmethod
+    def _cancel_cb(_goal_handle: ServerGoalHandle) -> CancelResponse:
+        return CancelResponse.ACCEPT
+
+    @staticmethod
+    def get_task_specs(topic: str) -> TaskSpecs:
+        return TaskSpecs(
+            task_name="system/wait",
+            blocking=True,
+            cancel_on_stop=True,
+            topic=topic,
+            cancel_reported_as_success=False,
+            reentrant=False,
+            msg_interface=Wait,
+            task_server_type=TaskServerType.ACTION,
         )
