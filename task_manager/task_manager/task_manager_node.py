@@ -29,7 +29,7 @@ import rclpy
 from rclpy import Parameter
 from rclpy.action import ActionServer
 from rclpy.action.server import CancelResponse, ServerGoalHandle
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -40,7 +40,6 @@ from rosbridge_library.internal.message_conversion import extract_values
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
-from task_manager_msgs.srv import CancelTasks, StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
@@ -159,19 +158,8 @@ class TaskManager(Node):
             stop_topic = "_" + stop_topic
             cancel_topic = "_" + cancel_topic
 
-        stop_service = StopTasksService(self, active_tasks=self.active_tasks)
-        self.create_service(
-            StopTasks, stop_topic, callback=stop_service.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
-        )
-
-        cancel_service = CancelTasksService(self, active_tasks=self.active_tasks)
-        self.create_service(
-            CancelTasks,
-            cancel_topic,
-            callback=cancel_service.service_cb,
-            callback_group=MutuallyExclusiveCallbackGroup(),
-        )
-
+        stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
+        cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)

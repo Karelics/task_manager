@@ -105,7 +105,7 @@ class TaskManagerTestNode(unittest.TestCase):
         )
         self._tasks_started = []
 
-    def _active_tasks_cb(self, active_tasks_msg):
+    def _active_tasks_cb(self, active_tasks_msg) -> None:
         for active_task in active_tasks_msg.active_tasks:
             if active_task.task_id not in self._tasks_started:
                 self._tasks_started.append(active_task.task_id)
@@ -124,7 +124,7 @@ class TaskManagerTestNode(unittest.TestCase):
             time.sleep(0.01)
         return future.result()
 
-    def wait_for_task_start(self, task_id: str, timeout: float = 5.0):
+    def wait_for_task_start(self, task_id: str, timeout: float = 5.0) -> None:
         """Utility function to wait for the task to be started."""
         start = time.time()
         while task_id not in self._tasks_started:
@@ -154,7 +154,7 @@ class TaskManagerTestNode(unittest.TestCase):
         goal = create_add_two_ints_task_goal(task_id, task_name, run_time_secs, request)
         return self._start_task(goal)
 
-    def _start_task(self, goal):
+    def _start_task(self, goal) -> ClientGoalHandle:
         future: Future = self.execute_task_client.send_goal_async(goal)
         goal_handle = self._get_response(future)
         return goal_handle

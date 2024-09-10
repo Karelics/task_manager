@@ -38,7 +38,7 @@ class SystemTaskTests(TaskManagerTestNode):
         cancel_response = self.execute_cancel_task(task_ids=["111"])
         goal_handle.get_result()
 
-        self.assertTrue(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
         self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
 
         self.assertEqual(

@@ -13,9 +13,13 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  ------------------------------------------------------------------
-
+import time
+from abc import ABC, abstractmethod
 
 # ROS
+import rclpy
+from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 
 # Task Manager messages
@@ -27,27 +31,40 @@ from task_manager.task_client import CancelTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
 
-class StopTasksService:
+class SystemTask(ABC):  # pylint: disable=too-few-public-methods
+    """Abstract class for system tasks."""
+
+    @staticmethod
+    @abstractmethod
+    def get_task_specs(topic: str) -> TaskSpecs:
+        """Returns TaskSpecs object that describes the task properties."""
+
+
+class StopTasksService(SystemTask):
     """Implements Stop-command."""
 
-    def __init__(self, node: Node, active_tasks: ActiveTasks):
-        self.node = node
-        self.active_tasks = active_tasks
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks):
+        self._node = node
+        self._topic = topic
+        self._active_tasks = active_tasks
+
+        self._node.create_service(
+            StopTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
+        )
 
     def service_cb(self, _request: StopTasks.Request, response: StopTasks.Response) -> StopTasks.Response:
         """Stops all the currently active tasks that have 'cancel_on_stop' field set to True."""
         try:
-            self.active_tasks.cancel_tasks_on_stop()
+            self._active_tasks.cancel_tasks_on_stop()
             response.success = True
         except CancelTaskFailedError as e:
-            self.node.get_logger().error(f"Failed to stop some tasks on STOP command: {e}")
+            self._node.get_logger().error(f"Failed to stop some tasks on STOP command: {e}")
             response.success = False
 
         return response
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
-        """Returns TaskSpecs object that describes the task properties."""
         return TaskSpecs(
             task_name="system/stop",
             blocking=False,
@@ -61,12 +78,17 @@ class StopTasksService:
         )
 
 
-class CancelTasksService:
+class CancelTasksService(SystemTask):
     """Cancel any task based on the task_id."""
 
-    def __init__(self, node: Node, active_tasks: ActiveTasks):
-        self.node = node
-        self.active_tasks = active_tasks
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+        self._node = node
+        self._topic = topic
+        self._active_tasks = active_tasks
+
+        self._node.create_service(
+            CancelTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
+        )
 
     def service_cb(self, request: CancelTasks.Request, response: CancelTasks.Response) -> CancelTasks.Response:
         """Cancels the currently active tasks by given task_id."""
@@ -74,14 +96,14 @@ class CancelTasksService:
         response.success = True
         for task_id in request.cancelled_tasks:
             try:
-                self.active_tasks.cancel_task(task_id)
+                self._active_tasks.cancel_task(task_id)
             except KeyError:
-                self.node.get_logger().warning(
+                self._node.get_logger().warning(
                     f"Tried to cancel a task with ID {task_id}, but the task is not active. "
                     f"Considering as a successful cancel."
                 )
             except CancelTaskFailedError as e:
-                self.node.get_logger().error(f"Failed to cancel task with ID {task_id}: {e}")
+                self._node.get_logger().error(f"Failed to cancel task with ID {task_id}: {e}")
                 response.success = False
                 continue
 
@@ -92,7 +114,6 @@ class CancelTasksService:
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
-        """Returns TaskSpecs object that describes the task properties."""
         return TaskSpecs(
             task_name="system/cancel_task",
             blocking=False,
