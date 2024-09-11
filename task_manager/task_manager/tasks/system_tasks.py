@@ -159,7 +159,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             loop_time = 0.1 if duration_in_seconds > 0.1 else duration_in_seconds
             end_time = start_time + Duration(nanoseconds=int(duration_in_seconds * 1e9))
 
-        feedback_frequency_ns = int(1.0 * 1e9)
+        feedback_period_ns = int(1.0 * 1e9)
         last_feedback_stamp = start_time
 
         while rclpy.ok() and self._node.get_clock().now() < end_time:
@@ -172,7 +172,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
                 return Wait.Result()
 
             # Publish feedback
-            if (self._node.get_clock().now() - last_feedback_stamp).nanoseconds >= feedback_frequency_ns:
+            if (self._node.get_clock().now() - last_feedback_stamp).nanoseconds >= feedback_period_ns:
                 last_feedback_stamp = self._node.get_clock().now()
                 goal_handle.publish_feedback(
                     Wait.Feedback(remaining_time=float((end_time.nanoseconds - last_feedback_stamp.nanoseconds) / 1e9))
@@ -194,7 +194,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             blocking=True,
             cancel_on_stop=True,
             topic=topic,
-            cancel_reported_as_success=False,
+            cancel_reported_as_success=True,
             reentrant=False,
             msg_interface=Wait,
             task_server_type=TaskServerType.ACTION,
