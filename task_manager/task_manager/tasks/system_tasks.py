@@ -13,7 +13,6 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  ------------------------------------------------------------------
-import sys
 import time
 from abc import ABC, abstractmethod
 
@@ -155,7 +154,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
         # Wait indefinitely if duration is 0.0
         if duration_in_seconds <= 0.0:
             loop_time = 0.1
-            end_time = Time(nanoseconds=sys.maxsize, clock_type=ClockType.ROS_TIME)
+            end_time = Time(nanoseconds=2**63 - 1, clock_type=ClockType.ROS_TIME)
         else:
             loop_time = 0.1 if duration_in_seconds > 0.1 else duration_in_seconds
             end_time = start_time + Duration(nanoseconds=int(duration_in_seconds * 1e9))
