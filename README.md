@@ -93,7 +93,7 @@ Tasks that are implemented using ROS Services cannot be cancelled due to their n
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
 
 ### Wait task <a name="wait"></a>
-The `system/wait` task is a blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`). 
+The `system/wait` task is a blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`).
 
 ## Examples
 Examples and their run instructions can be found in [examples](examples) folder for:
@@ -127,12 +127,12 @@ Examples and their run instructions can be found in [examples](examples) folder 
 
 The following tasks are available by default from the Task Manager
 
-| Task name          | Description                                                                         | Message interface                                                                                       |
-|--------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
-| system/mission     | Starts a mission.                                                                   | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
-| system/cancel_task | Cancels the given tasks by Task ID.                                                 | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
-| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`.    | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
-| system/wait | Blocking task that waits for a given time or until cancelled with `duration <= 0.0`. | [Wait](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Wait.action)
+| Task name          | Description                                                                                                   | Message interface                                                                                       |
+|--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+| system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
+| system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
+| system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`.                              | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
+| system/wait | A blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`). | [Wait](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Wait.action)
 
 ## Parameters
 
