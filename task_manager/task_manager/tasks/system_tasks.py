@@ -164,7 +164,10 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
 
         while rclpy.ok() and self._node.get_clock().now() < end_time:
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
+                if duration_in_seconds <= 0.0:
+                    goal_handle.succeed()
+                else:
+                    goal_handle.canceled()
                 return Wait.Result()
 
             if not goal_handle.is_active:
@@ -194,7 +197,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             blocking=True,
             cancel_on_stop=True,
             topic=topic,
-            cancel_reported_as_success=True,
+            cancel_reported_as_success=False,
             reentrant=False,
             msg_interface=Wait,
             task_server_type=TaskServerType.ACTION,

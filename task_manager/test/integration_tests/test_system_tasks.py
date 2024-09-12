@@ -128,8 +128,7 @@ class SystemTaskTests(TaskManagerTestNode):
             wait_result = goal_handle.get_result()
 
             self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
-            # If the task would not stay waiting, the status would be DONE
-            self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+            self.assertEqual(wait_result.result.task_status, TaskStatus.DONE)
             self.assertEqual(wait_result.result.task_result, json.dumps({}))
 
         with self.subTest("Input duration is zero - Wait indefinitely"):
@@ -141,8 +140,7 @@ class SystemTaskTests(TaskManagerTestNode):
             wait_result = goal_handle.get_result()
 
             self.assertEqual(cancel_response.status, GoalStatus.STATUS_SUCCEEDED)
-            # If the task would not stay waiting with duration 0.0, the status would be DONE
-            self.assertEqual(wait_result.result.task_status, TaskStatus.CANCELED)
+            self.assertEqual(wait_result.result.task_status, TaskStatus.DONE)
             self.assertEqual(wait_result.result.task_result, json.dumps({}))
 
 
