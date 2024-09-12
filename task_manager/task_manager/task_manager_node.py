@@ -29,7 +29,7 @@ import rclpy
 from rclpy import Parameter
 from rclpy.action import ActionServer
 from rclpy.action.server import CancelResponse, ServerGoalHandle
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -40,7 +40,6 @@ from rosbridge_library.internal.message_conversion import extract_values
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, TaskStatus
-from task_manager_msgs.srv import CancelTasks, StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
@@ -49,7 +48,7 @@ from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
-from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService
+from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService, WaitTask
 from task_manager.tasks.task_action_server import TaskActionServer
 from task_manager.tasks.task_service_server import TaskServiceServer
 
@@ -152,6 +151,7 @@ class TaskManager(Node):
         stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
+        wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
 
         if not self._enable_task_servers:
             # Make services hidden. Actions cannot be hidden in a same way as services are,
@@ -159,24 +159,15 @@ class TaskManager(Node):
             stop_topic = "_" + stop_topic
             cancel_topic = "_" + cancel_topic
 
-        stop_service = StopTasksService(self, active_tasks=self.active_tasks)
-        self.create_service(
-            StopTasks, stop_topic, callback=stop_service.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
-        )
-
-        cancel_service = CancelTasksService(self, active_tasks=self.active_tasks)
-        self.create_service(
-            CancelTasks,
-            cancel_topic,
-            callback=cancel_service.service_cb,
-            callback_group=MutuallyExclusiveCallbackGroup(),
-        )
-
+        stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
+        cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
+        wait = WaitTask(self, topic=wait_topic)
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
+        self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request

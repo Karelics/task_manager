@@ -31,6 +31,7 @@ set(srv_files
 set(action_files
   "action/Mission.action"
   "action/ExecuteTask.action"
+  "action/Wait.action"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
