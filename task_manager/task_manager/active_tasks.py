@@ -119,7 +119,7 @@ class ActiveTasks:
                 try:
                     task_client.cancel_task()
                 except CancelTaskFailedError as e:
-                    err_msg += f"{task_client.task_specs.task_name} ({str(e)}), "
+                    err_msg += f"{task_client.task_specs.task_name} ({repr(e)}), "
         if err_msg != "":
             raise CancelTaskFailedError(err_msg)
 

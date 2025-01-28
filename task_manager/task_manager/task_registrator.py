@@ -189,7 +189,7 @@ def populate_msg(task_data: str, msg_interface: Any):
         raise ROSGoalParsingError(
             f"Unable to parse task data, check the message interface for the correct message data format. "
             f"{msg_interface} requires the following fields and types: {fields_and_types}. "
-            f"The Following error was received: {str(e)}"
+            f"The Following error was received: {repr(e)}"
         ) from e
     return task_goal_message
 
