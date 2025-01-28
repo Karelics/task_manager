@@ -56,23 +56,35 @@ class TaskActionServer:
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
         )
+        self._node = node  # Keep reference for logging purposes
 
     def _execute_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
         task_data = json.dumps(extract_values(request))
         goal = ExecuteTask.Goal(task_id="", task_name=self.task_specs.task_name, task_data=task_data, source="")
         result = self._execute_task_cb(goal, goal_handle)
-
         if result.task_status == TaskStatus.DONE:
             goal_handle.succeed()
         elif result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
             # Need to also check if the cancel was requested. If the goal was cancelled
             # through a system task, we cannot set the status to be cancelled and must abort instead.
             goal_handle.canceled()
-        else:  # Could be ERROR or IN_PROGRESS if the goal couldn't be cancelled
+        elif result.task_status == TaskStatus.ERROR:
+            self._node.get_logger().error(
+                f"Task {self.task_specs.task_name} failed with error code '{result.error_code}'."
+            )
+            goal_handle.abort()
+        else:  # Could be IN_PROGRESS if the goal couldn't be cancelled
+            self._node.get_logger().error(
+                f"Task {self.task_specs.task_name} failed with unknown status. Could still be in progress."
+            )
             goal_handle.abort()
 
-        return populate_instance(json.loads(result.task_result), self.task_specs.msg_interface.Result())
+        try:
+            return populate_instance(json.loads(result.task_result), self.task_specs.msg_interface.Result())
+        except json.decoder.JSONDecodeError as e:
+            self._node.get_logger().warning(f"Failed to decode task result: {repr(e)}. Returning empty result.")
+            return self.task_specs.msg_interface.Result()
 
     @staticmethod
     def _cancel_cb(_goal_handle):
