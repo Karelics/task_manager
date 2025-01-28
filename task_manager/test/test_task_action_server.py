@@ -35,8 +35,8 @@ from task_manager_msgs.msg import TaskDoneResult, TaskStatus
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.task_action_server import TaskActionServer
 
-
 # pylint: disable=protected-access
+
 
 class TestActionTaskClient(unittest.TestCase):
     """Integration tests for ActionTaskClient."""
