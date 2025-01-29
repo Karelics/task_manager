@@ -219,7 +219,7 @@ class TaskManager(Node):
         try:
             response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
         except CancelTaskFailedError as e:
-            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {str(e)}")
+            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {repr(e)}")
             response.task_status = TaskStatus.IN_PROGRESS
             response.error_code = response.ERROR_TASK_CANCEL_FAILED
 
@@ -243,13 +243,13 @@ class TaskManager(Node):
         try:
             task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task_name])
         except DuplicateTaskIdException as error_msg:
-            self.get_logger().error(str(error_msg))
+            self.get_logger().error(repr(error_msg))
             error_code = ExecuteTask.Result().ERROR_DUPLICATE_TASK_ID
         except ROSGoalParsingError as error_msg:
-            self.get_logger().error(str(error_msg))
+            self.get_logger().error(repr(error_msg))
             error_code = ExecuteTask.Result().ERROR_TASK_DATA_PARSING_FAILED
         except TaskStartError as error_msg:
-            self.get_logger().error(str(error_msg))
+            self.get_logger().error(repr(error_msg))
             error_code = ExecuteTask.Result().ERROR_TASK_START_ERROR
 
         return task_client, error_code

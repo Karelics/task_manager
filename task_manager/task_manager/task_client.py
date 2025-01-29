@@ -193,7 +193,7 @@ class ActionTaskClient(TaskClient):
             self._wait_for_future_to_complete(future, timeout=timeout)
         except TimeoutError as e:
             self._node.get_logger().error(
-                f"Timeout while waiting response to cancel request from server {self.task_specs.task_name}: {str(e)}."
+                f"Timeout while waiting response to cancel request from server {self.task_specs.task_name}: {repr(e)}."
             )
             raise CancelTaskFailedError("Cancel request timed out.") from e
         return future.result()
