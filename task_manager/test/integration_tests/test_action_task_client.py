@@ -23,6 +23,7 @@ import rclpy
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.client import ClientGoalHandle
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.task import Future
 
 # Thirdparty
 from mock_servers import create_fib_action_server
@@ -204,14 +205,13 @@ class TestActionTaskClient(unittest.TestCase):
     def test_goal_done_cb_called_only_once(self) -> None:
         """Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel."""
 
-        def execute_cb(_goal_handle):
-            _goal_handle.succeed()
-            return Fibonacci.Result()
+        # def execute_cb(_goal_handle):
+        #     _goal_handle.succeed()
+        #     return Fibonacci.Result()
 
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        self.fibonacci_server.register_execute_callback(execute_cb)
+        # self.fibonacci_server.register_execute_callback(execute_cb)
         client.start_task_async(Fibonacci.Goal(order=1))
-        client.goal_done.wait(timeout=1)
         handle = ClientGoalHandle(
             goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
             action_client=client._client,
@@ -219,7 +219,8 @@ class TestActionTaskClient(unittest.TestCase):
         )
         client._goal_handle = handle
         client.cancel_task()
-        self.assertEqual(client.task_details.status, TaskStatus.DONE)
+        client.goal_done.wait(timeout=1)
+        self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
 
     def test_cancel_task_goal_terminated_before_cancel(self) -> None:
         """Case where the goal has already been finished when trying to cancel it.
@@ -227,22 +228,31 @@ class TestActionTaskClient(unittest.TestCase):
         Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel.
         """
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        original_done_cb = client._goal_done_cb
+
+        def done_cb(future: Future) -> None:
+            sleep(1.0)
+            original_done_cb(future)
+
+        client._goal_done_cb = done_cb
+
         client.start_task_async(Fibonacci.Goal(order=0))
-        client.goal_done.wait(timeout=1)
-
-        # Reset state. Simulates a state where goal has finished but the response did not arrive to task manager
-        handle = ClientGoalHandle(
-            goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
-            action_client=client._client,
-            goal_response=Fibonacci.Result,
-        )
-        client._goal_handle = handle
-        client._result_future._done = False  # type: ignore[union-attr]
-        client._result_future.add_done_callback(client._goal_done_cb)  # type: ignore[union-attr]
-        client.goal_done.clear()
-
+        sleep(0.2)
         client.cancel_task()
-        self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
+        client.goal_done.wait(timeout=1)
+        # self._node.get_logger().info(f"initial finished status: {client.task_details.status}")
+        # Reset state. Simulates a state where goal has finished but the response did not arrive to task manager
+        # handle = ClientGoalHandle(
+        #     goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
+        #     action_client=client._client,
+        #     goal_response=Fibonacci.Result,
+        # )
+        # client._goal_handle = handle
+        # client._result_future._done = False  # type: ignore[union-attr]
+        # client._result_future.add_done_callback(client._goal_done_cb)  # type: ignore[union-attr]
+        # client.goal_done.clear()
+
+        self.assertEqual(client.task_details.status, TaskStatus.DONE)
 
 
 if __name__ == "__main__":
