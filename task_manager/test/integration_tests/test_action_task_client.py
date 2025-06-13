@@ -21,8 +21,8 @@ from time import sleep
 # ROS
 import rclpy
 from rclpy.action import CancelResponse, GoalResponse
-from rclpy.action.client import ClientGoalHandle
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.task import Future
 
 # Thirdparty
 from mock_servers import create_fib_action_server
@@ -201,48 +201,30 @@ class TestActionTaskClient(unittest.TestCase):
         client.cancel_task()
         self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
 
-    def test_goal_done_cb_called_only_once(self) -> None:
-        """Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel."""
-
-        def execute_cb(_goal_handle):
-            _goal_handle.succeed()
-            return Fibonacci.Result()
-
-        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        self.fibonacci_server.register_execute_callback(execute_cb)
-        client.start_task_async(Fibonacci.Goal(order=1))
-        client.goal_done.wait(timeout=1)
-        handle = ClientGoalHandle(
-            goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
-            action_client=client._client,
-            goal_response=Fibonacci.Result,
-        )
-        client._goal_handle = handle
-        client.cancel_task()
-        self.assertEqual(client.task_details.status, TaskStatus.DONE)
-
     def test_cancel_task_goal_terminated_before_cancel(self) -> None:
-        """Case where the goal has already been finished when trying to cancel it.
-
-        Checks that goal_done_cb is ran only once per goal and we do not throw error for the cancel.
-        """
+        """Checks that calling cancel after a task finished does not change the task's end status."""
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
         client.start_task_async(Fibonacci.Goal(order=0))
         client.goal_done.wait(timeout=1)
-
-        # Reset state. Simulates a state where goal has finished but the response did not arrive to task manager
-        handle = ClientGoalHandle(
-            goal_id=client._goal_handle.goal_id,  # type: ignore[union-attr]
-            action_client=client._client,
-            goal_response=Fibonacci.Result,
-        )
-        client._goal_handle = handle
-        client._result_future._done = False  # type: ignore[union-attr]
-        client._result_future.add_done_callback(client._goal_done_cb)  # type: ignore[union-attr]
-        client.goal_done.clear()
-
         client.cancel_task()
-        self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
+        self.assertEqual(client.task_details.status, TaskStatus.DONE)
+
+    def test_cancel_task_goal_terminated_before_cancel_waiting_for_result(self) -> None:
+        """Case where the goal is canceled when it already finished but the goal_done_cb did not finish yet."""
+        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        original_done_cb = client._goal_done_cb
+
+        def done_cb(future: Future) -> None:
+            sleep(1.0)  # Simulate a delay in receiving the result
+            original_done_cb(future)
+
+        client._goal_done_cb = done_cb
+
+        client.start_task_async(Fibonacci.Goal(order=0))
+        sleep(0.3)  # Have the goal finish (at least on the server side) before canceling
+        client.cancel_task()
+        client.goal_done.wait(timeout=1)
+        self.assertEqual(client.task_details.status, TaskStatus.DONE)
 
 
 if __name__ == "__main__":
