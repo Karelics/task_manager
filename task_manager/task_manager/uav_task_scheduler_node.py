@@ -22,6 +22,7 @@ from threading import Lock
 from typing import Dict, List, Optional
 
 import rclpy
+from rclpy import Parameter
 from rclpy.action import ActionClient, ActionServer
 from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -47,7 +48,9 @@ class UAVTaskScheduler(Node):
         super().__init__("uav_task_scheduler", parameter_overrides=parameter_overrides)
 
         # Parameters
-        self.robot_prefixes: List[str] = self.declare_parameter("robot_prefixes", []).value
+        self.robot_prefixes: List[str] = self.declare_parameter(
+            "robot_prefixes", Parameter.Type.STRING_ARRAY
+        ).value
         if not self.robot_prefixes:
             self.get_logger().error(
                 "No robot prefixes configured! Please specify robot_prefixes parameter (e.g., ['uav1', 'uav2'])"
