@@ -1,0 +1,8 @@
+uav_task_scheduler:
+  ros__parameters:
+    # List of robot prefixes to manage (e.g., uav1, uav2, uav3)
+    robot_prefixes: ["uav1", "uav2"]
+
+    # Timeout in seconds for considering a robot disconnected
+    # if no active_tasks updates are received
+    connection_timeout: 5.0
