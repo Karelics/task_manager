@@ -1,0 +1,10 @@
+uav_task_scheduler:
+  ros__parameters:
+    # List of robot prefixes to manage
+    # Each robot should have a task_manager node running under this namespace
+    # Example: uav1 -> /uav1/task_manager/execute_task
+    robot_prefixes: ["uav1", "uav2", "uav3"]
+
+    # Timeout in seconds for considering a robot disconnected
+    # if no active_tasks updates are received
+    connection_timeout: 5.0

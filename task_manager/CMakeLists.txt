@@ -29,6 +29,7 @@ ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
   task_manager/task_manager_node.py
+  task_manager/uav_task_scheduler_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
