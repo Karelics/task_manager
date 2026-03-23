@@ -62,14 +62,14 @@ class TaskManager(Node):
         qos = QoSProfile(
             depth=10, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
-        self._active_tasks_pub = self.create_publisher(ActiveTaskArray, "/task_manager/active_tasks", qos_profile=qos)
+        self._active_tasks_pub = self.create_publisher(ActiveTaskArray, "~/active_tasks", qos_profile=qos)
         self.active_tasks = active_tasks
         self.active_tasks.set_active_tasks_changed_cb(self._active_tasks_changed_cb)
 
         self.task_registrator = TaskRegistrator(self, self.active_tasks, task_done_cb=self._task_done_cb)
 
         results_qos = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.RELIABLE)
-        self.results_pub = self.create_publisher(TaskDoneResult, "/task_manager/results", qos_profile=results_qos)
+        self.results_pub = self.create_publisher(TaskDoneResult, "~/results", qos_profile=results_qos)
 
         self._enable_task_servers = self.declare_parameter("enable_task_servers", False).value
 
@@ -79,7 +79,7 @@ class TaskManager(Node):
         self._action_server = ActionServer(
             node=self,
             action_type=ExecuteTask,
-            action_name="/task_manager/execute_task",
+            action_name="~/execute_task",
             execute_callback=self._execute_task_action_cb,
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
