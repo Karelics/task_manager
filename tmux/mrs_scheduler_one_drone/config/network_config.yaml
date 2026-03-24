@@ -1,0 +1,17 @@
+# 1. This list is used by NimbroNetwork for mutual communication of the UAVs
+#    The names of the robots have to match hostnames described in /etc/hosts.
+#
+# 2. This list is used by MpcTracker for mutual collision avoidance of the UAVs.
+#    The names should match the true "UAV_NAMES" (the topic prefixes).
+#
+#     network_config:=~/config/network_config.yaml
+#
+#    to the core.launch and nimbro.launch.
+
+network:
+
+  robot_names: [
+
+    uav1,
+
+  ]

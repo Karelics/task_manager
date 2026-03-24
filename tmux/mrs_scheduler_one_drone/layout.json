@@ -1,0 +1,93 @@
+[
+{
+	"border": "normal",
+		"floating": "auto_off",
+		"fullscreen_mode": 0,
+		"layout": "splitv",
+		"marks": [],
+		"percent": 0.428571428571429,
+		"type": "con",
+		"nodes": [
+		{
+			"border": "normal",
+			"floating": "auto_off",
+			"layout": "splith",
+			"marks": [],
+			"percent": 0.5,
+			"type": "con",
+			"nodes": [
+			{
+				"border": "normal",
+				"floating": "auto_off",
+				"layout": "splith",
+				"marks": [],
+				"percent": 1,
+				"type": "con",
+				"nodes": [
+				{
+					"border": "pixel",
+					"current_border_width": 3,
+					"floating": "auto_off",
+					"geometry": {
+						"height": 1545,
+						"width": 2560,
+						"x": 0,
+						"y": 55
+					},
+					"marks": [],
+					"name": "RViz*",
+					"percent": 0.5,
+					"swallows": [
+					{
+						"instance": "^rviz2$"
+					}
+					],
+					"type": "con"
+				},
+				{
+					"border": "pixel",
+					"current_border_width": 3,
+					"floating": "auto_off",
+					"geometry": {
+						"height": 1528,
+						"width": 1247,
+						"x": 1292,
+						"y": 51
+					},
+					"marks": [],
+					"name": "rqt_reconfigure__Param - rqt",
+					"percent": 0.5,
+					"swallows": [
+					{
+						"instance": "^rqt_reconfigure$"
+					}
+					],
+					"type": "con"
+				}
+				]
+			}
+			]
+		},
+		{
+			"border": "pixel",
+			"current_border_width": 3,
+			"floating": "auto_off",
+			"geometry": {
+				"height": 460,
+				"width": 724,
+				"x": 0,
+				"y": 0
+			},
+			"marks": [],
+			"name": "runVim session.yml",
+			"percent": 0.5,
+			"swallows": [
+			{
+				"instance": "^urxvt$"
+			}
+			],
+			"type": "con"
+		}
+		]
+}
+]

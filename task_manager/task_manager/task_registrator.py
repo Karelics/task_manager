@@ -53,7 +53,7 @@ class TaskRegistrator:
     """Handles the logic of starting new tasks."""
 
     # Prefix for each task topic
-    TASK_TOPIC_PREFIX: str = "/task_manager/task"
+    TASK_TOPIC_PREFIX: str = "~/task"
 
     def __init__(
         self,

@@ -108,7 +108,7 @@ def generate_launch_description():
     # UAV Task Scheduler Node
     scheduler_node = Node(
         package="task_manager",
-        executable="uav_task_scheduler_node.py",
+        executable="mrs_task_scheduler_node.py",
         name="uav_task_scheduler",
         output="screen",
         parameters=[scheduler_params],

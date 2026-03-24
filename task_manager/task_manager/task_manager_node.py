@@ -153,11 +153,11 @@ class TaskManager(Node):
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
 
-        if not self._enable_task_servers:
-            # Make services hidden. Actions cannot be hidden in a same way as services are,
-            # so Missions are always public.
-            stop_topic = "_" + stop_topic
-            cancel_topic = "_" + cancel_topic
+        # if not self._enable_task_servers:
+        #     # Make services hidden. Actions cannot be hidden in a same way as services are,
+        #     # so Missions are always public.
+        #     stop_topic = "_" + stop_topic
+        #     cancel_topic = "_" + cancel_topic
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)

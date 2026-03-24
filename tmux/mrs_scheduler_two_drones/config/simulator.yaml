@@ -1,0 +1,27 @@
+frames:
+  fcu:
+    publish_tf: true
+
+uav_names: [
+  "uav1",
+  "uav2",
+]
+
+uav1:
+  type: "x500"
+  spawn:
+    x: 0.0
+    y: 0.0
+    z: 2.0
+    heading: 0.0
+
+uav2:
+  type: "x500"
+  spawn:
+    x: 10.0
+    y: 0.0
+    z: 2.0
+    heading: 0.0
+
+individual_takeoff_platform:
+  enabled: true

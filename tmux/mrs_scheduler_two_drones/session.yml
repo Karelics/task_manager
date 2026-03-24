@@ -1,0 +1,68 @@
+# do not modify these
+root: ./
+name: simulation
+socket_name: mrs
+attach: false
+tmux_options: -f /etc/ctu-mrs/tmux.conf
+# you can modify these
+startup_window: status
+pre_window: export UAV_TYPE=x500;
+            export PLATFORM_CONFIG=`ros2 pkg prefix mrs_multirotor_simulator`/share/mrs_multirotor_simulator/config/mrs_uav_system/$UAV_TYPE.yaml;
+            export USE_SIM_TIME="true";
+            export RMW_IMPLEMENTATION=rmw_zenoh_cpp
+windows:
+  - router:
+      layout: tiled
+      panes:
+        - ros2 run rmw_zenoh_cpp rmw_zenohd
+  - simulator:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_multirotor_simulator multirotor_simulator.launch.py custom_config:=./config/simulator.yaml
+  - hw_api:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; ros2 launch mrs_multirotor_simulator hw_api.launch.py custom_config:=./config/hw_api.yaml
+        - export UAV_NAME=uav2; ros2 launch mrs_multirotor_simulator hw_api.launch.py custom_config:=./config/hw_api.yaml
+  - core:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; ros2 launch mrs_uav_core core.launch.py platform_config:=$PLATFORM_CONFIG world_config:=./config/world_config.yaml custom_config:=./config/custom_config.yaml network_config:=./config/network_config.yaml
+        - export UAV_NAME=uav2; ros2 launch mrs_uav_core core.launch.py platform_config:=$PLATFORM_CONFIG world_config:=./config/world_config.yaml custom_config:=./config/custom_config.yaml network_config:=./config/network_config.yaml
+  - status:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; ros2 run mrs_uav_status status.sh
+        - export UAV_NAME=uav2; ros2 run mrs_uav_status status.sh
+  - scheduler:
+      layout: tiled
+      panes:
+        - ros2 launch task_manager mrs_task_scheduler.launch.py
+  - task_manager:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; ros2 launch task_manager mrs_task_manager.launch.py custom_config:=./config/task_manager.yaml
+        - export UAV_NAME=uav2; ros2 launch task_manager mrs_task_manager.launch.py custom_config:=./config/task_manager.yaml
+  - action_manager:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; ros2 launch mrs_action action_manager.launch.py
+        - export UAV_NAME=uav2; ros2 launch mrs_action action_manager.launch.py
+  - midair_activation:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; waitForCore; ./midair_activation.sh
+        - export UAV_NAME=uav2; waitForCore; ./midair_activation.sh
+  - goto:
+      layout: tiled
+      panes:
+        - export UAV_NAME=uav1; waitForTakeoff; ./goto1.py
+        - export UAV_NAME=uav2; waitForTakeoff; ./goto2.py
+  - rviz:
+      layout: tiled
+      panes:
+        - ros2 run rviz2 rviz2 -d ./rviz.rviz
+  - layout:
+      layout: tiled
+      panes:
+        - sleep 2.0; ~/.i3/layout_manager.sh ./layout.json

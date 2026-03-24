@@ -1,0 +1,5 @@
+# A timeout between the takeoff being triggered and the UAV actually taking off
+# while the timeout is counting down, the takeoff can be aborted by switching off
+# the offboard mode.
+# default = 5 sec
+safety_timeout: 1.0 # [s]

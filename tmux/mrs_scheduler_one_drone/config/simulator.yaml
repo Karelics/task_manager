@@ -1,0 +1,17 @@
+frames:
+  fcu:
+    publish_tf: false
+
+uav1:
+  type: "x500"
+  spawn:
+    x: 10.0
+    y: 15.0
+    z: 0.0
+    heading: 3.14
+
+dynamic:
+  realtime_factor: 1.0 # [-]
+
+individual_takeoff_platform:
+  enabled: false

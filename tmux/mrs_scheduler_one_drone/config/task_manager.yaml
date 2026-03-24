@@ -1,0 +1,25 @@
+uav1:
+  task_manager:
+    ros__parameters:
+      tasks: [
+        "goto",
+        "goto_action",
+      ]
+
+      goto:
+        task_name: "goto"
+        topic: "control_manager/goto"
+        msg_interface: "mrs_msgs.srv.Vec4"
+        blocking: True
+        cancel_on_stop: True
+        reentrant: False
+
+      goto_action:
+        task_name: "goto_action"
+        topic: "action_manager/goto"
+        msg_interface: "mrs_action_msgs.action.Goto"
+        blocking: True
+        cancel_on_stop: True
+        reentrant: False
+
+      enable_task_servers: False

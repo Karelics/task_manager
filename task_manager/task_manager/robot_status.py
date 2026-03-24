@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 #  ------------------------------------------------------------------
-#   Copyright 2024 Karelics Oy
+#   Copyright 2026, Frantisek Nekovar
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ class RobotStatus:
     robot_id: str  # Robot prefix, e.g., "uav1", "uav2"
     active_tasks: List[ActiveTask] = field(default_factory=list)
     last_seen: datetime = field(default_factory=datetime.now)
-    is_connected: bool = True
+    is_connected: bool = False
     total_tasks_assigned: int = 0
 
     def is_available(self) -> bool:

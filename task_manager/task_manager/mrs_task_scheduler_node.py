@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 #  ------------------------------------------------------------------
-#   Copyright 2024 Karelics Oy
+#   Copyright 2026, Frantisek Nekovar
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,9 +17,11 @@
 #  ------------------------------------------------------------------
 
 import uuid
+import time
 from datetime import datetime, timedelta
 from threading import Lock
 from typing import Dict, List, Optional
+import asyncio
 
 import rclpy
 from rclpy import Parameter
@@ -122,7 +124,7 @@ class UAVTaskScheduler(Node):
         )
 
         # Timer to check for disconnected robots
-        self.connection_check_timer = self.create_timer(1.0, self._check_robot_connections)
+        #self.connection_check_timer = self.create_timer(1.0, self._check_robot_connections)
 
         self.get_logger().info(f"UAV Task Scheduler initialized with robots: {self.robot_prefixes}")
 
@@ -131,6 +133,7 @@ class UAVTaskScheduler(Node):
         with self.robots_lock:
             if robot_id in self.robots:
                 self.robots[robot_id].update_active_tasks(msg.active_tasks)
+                # self.get_logger().info(f"UAV {robot_id} active tasks updated: {[t.task_id for t in msg.active_tasks]}")
 
                 # Update task assignment statuses
                 with self.assignments_lock:
@@ -182,6 +185,7 @@ class UAVTaskScheduler(Node):
             ]
 
             if not available_robots:
+                self.get_logger().info("No available robots to assign task")
                 return None
 
             # Select robot with fewest total tasks assigned (even distribution)
@@ -189,9 +193,11 @@ class UAVTaskScheduler(Node):
                 available_robots, key=lambda x: x[1].total_tasks_assigned
             )[0]
 
+
+            self.get_logger().info(f"Selected robot {selected_robot_id} for task")
             return selected_robot_id
 
-    def _execute_task_callback(self, goal_handle: ServerGoalHandle) -> ExecuteTask.Result:
+    async def _execute_task_callback(self, goal_handle: ServerGoalHandle) -> ExecuteTask.Result:
         """Handle incoming task execution requests and distribute to robots."""
         request = goal_handle.request
 
@@ -225,7 +231,8 @@ class UAVTaskScheduler(Node):
                 return result
 
             self.get_logger().info(f"No available robots, waiting... ({total_waited:.1f}s)")
-            rclpy.spin_once(self, timeout_sec=wait_interval)
+            time.sleep(wait_interval)
+            # rclpy.spin_once(self, timeout_sec=wait_interval)
             total_waited += wait_interval
 
         if not selected_robot_id:
@@ -274,21 +281,19 @@ class UAVTaskScheduler(Node):
         robot_goal.source = request.source
         robot_goal.task_data = request.task_data
 
-        send_goal_future = action_client.send_goal_async(robot_goal)
+        send_goal_future = await action_client.send_goal_async(robot_goal)
 
         # Wait for goal to be accepted
-        rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
-
-        if not send_goal_future.done():
-            self.get_logger().error(f"Failed to send goal to {selected_robot_id}")
+        # rclpy.spin_until_future_complete(self, send_goal_future, timeout_sec=5.0)
+        if send_goal_future is None:
+            self.get_logger().error(f"Failed to send goal to {selected_robot_id} (future is None)")
             goal_handle.abort()
             result.task_status = TaskStatus.ERROR
             result.error_code = "failed_to_send_goal"
             assignment.status = "ERROR"
             return result
 
-        robot_goal_handle = send_goal_future.result()
-        if not robot_goal_handle.accepted:
+        if not send_goal_future.accepted:
             self.get_logger().error(f"Goal rejected by {selected_robot_id}")
             goal_handle.abort()
             result.task_status = TaskStatus.ERROR
@@ -296,27 +301,27 @@ class UAVTaskScheduler(Node):
             assignment.status = "ERROR"
             return result
 
+        self.get_logger().info(f"Task {request.task_id} sent to {selected_robot_id} and was accepted")
         assignment.status = "SENT"
-        self.get_logger().info(f"Task {request.task_id} sent to {selected_robot_id}")
 
         # Wait for result from robot
-        result_future = robot_goal_handle.get_result_async()
+        result_future = await send_goal_future.get_result_async()
 
-        while not result_future.done():
-            # Check for cancellation
-            if goal_handle.is_cancel_requested:
-                # Cancel the goal on the robot
-                self.get_logger().info(f"Cancelling task {request.task_id} on {selected_robot_id}")
-                cancel_future = robot_goal_handle.cancel_goal_async()
-                rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=5.0)
-                goal_handle.canceled()
-                result.task_status = TaskStatus.CANCELED
-                assignment.status = "CANCELED"
-                return result
+        # while not result_future.done():
+        #     # Check for cancellation
+        #     if goal_handle.is_cancel_requested:
+        #         # Cancel the goal on the robot
+        #         self.get_logger().info(f"Cancelling task {request.task_id} on {selected_robot_id}")
+        #         cancel_future = robot_goal_handle.cancel_goal_async()
+        #         rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=5.0)
+        #         goal_handle.canceled()
+        #         result.task_status = TaskStatus.CANCELED
+        #         assignment.status = "CANCELED"
+        #         return result
+        #
+        #     rclpy.spin_once(self, timeout_sec=0.1)
 
-            rclpy.spin_once(self, timeout_sec=0.1)
-
-        robot_result = result_future.result().result
+        robot_result = result_future.result
 
         # Copy result from robot
         result.task_id = robot_result.task_id

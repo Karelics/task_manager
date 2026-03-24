@@ -1,0 +1,39 @@
+hw_interface_plugin: "mrs_uav_simulator_hw_api_plugin::Api"
+
+plugin:
+  gnss:
+    utm_zone: "33U"
+    utm_x: 446291
+    utm_y: 5467963
+    amsl: 414.0
+  
+  input_timeout: 1.0 # [s]
+
+  input_mode:
+    actuators:             false
+    control_group:         false
+    attitude_rate:         true
+    attitude:              false
+    acceleration_hdg_rate: false
+    acceleration_hdg:      false
+    velocity_hdg_rate:     false
+    velocity_hdg:          false
+    position:              false
+
+    feedforward: true
+
+  outputs:
+    distance_sensor:      true
+    gnss:                 true
+    rtk:                  true
+    imu:                  true
+    altitude:             true
+    magnetometer_heading: true
+    rc_channels:          true
+    battery_state:        true
+    position:             true
+    orientation:          true
+    velocity:             true
+    angular_velocity:     true
+    odometry:             true
+    ground_truth:         true

@@ -1,0 +1,65 @@
+# do not modify these
+root: ./
+name: simulation
+socket_name: mrs
+attach: false
+tmux_options: -f /etc/ctu-mrs/tmux.conf
+# you can modify these
+startup_window: status
+pre_window: export UAV_NAME=uav1;
+            export UAV_TYPE=x500;
+            export PLATFORM_CONFIG=`ros2 pkg prefix mrs_multirotor_simulator`/share/mrs_multirotor_simulator/config/mrs_uav_system/$UAV_TYPE.yaml;
+            export USE_SIM_TIME="true";
+            export RMW_IMPLEMENTATION=rmw_zenoh_cpp
+windows:
+  - router:
+      layout: tiled
+      panes:
+        - ros2 run rmw_zenoh_cpp rmw_zenohd
+  - simulator:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_multirotor_simulator multirotor_simulator.launch.py custom_config:=./config/simulator.yaml
+  - hw_api:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_multirotor_simulator hw_api.launch.py custom_config:=./config/hw_api.yaml
+  - core:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_uav_core core.launch.py
+          platform_config:=$PLATFORM_CONFIG
+          world_config:=./config/world_config.yaml
+          custom_config:=./config/custom_config.yaml
+          network_config:=./config/network_config.yaml
+  - status:
+      layout: tiled
+      panes:
+        - ros2 run mrs_uav_status status.sh
+  - takeoff:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_uav_autostart automatic_start.launch.py custom_config:=./config/automatic_start.yaml
+        - waitForCore && ./takeoff.sh
+  - commands:
+      layout: tiled
+      panes:
+        - waitForTakeoff && ./goto.py
+  - scheduler:
+      layout: tiled
+      panes:
+        - ros2 launch mrs_action action_manager.launch.py
+        - ros2 launch task_manager mrs_task_manager.launch.py custom_config:=./config/task_manager.yaml
+        - ros2 launch task_manager mrs_task_scheduler.launch.py
+  - rviz:
+      layout: tiled
+      panes:
+        - ros2 run rviz2 rviz2 -d ./rviz.rviz
+  - reconfigure:
+      layout: tiled
+      panes:
+        - ros2 run rqt_reconfigure rqt_reconfigure
+  - layout:
+      layout: tiled
+      panes:
+        - waitForCore; ~/.i3/layout_manager.sh ./layout.json

@@ -1,0 +1,1 @@
+ros2 service call /uav1/control_manager/set_parameters rcl_interfaces/srv/SetParameters "{parameters: [{name: 'mrs_uav_trackers/mpc_tracker/dynamic/wiggle/enabled', value: {type: 1, bool_value: False}}]}"

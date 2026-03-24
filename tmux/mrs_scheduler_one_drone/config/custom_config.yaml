@@ -1,0 +1,39 @@
+# GET ALL PARAMETERS USABLE FOR CUSTOM CONFIG BY RUNNING:
+## --------------------------------------------------------------
+## |          rosrun mrs_uav_core get_public_params.py          #
+## --------------------------------------------------------------
+
+mrs_uav_managers:
+
+  estimation_manager:
+
+    # loaded state estimator plugins
+    state_estimators: [
+      "gps_baro",
+      "gps_garmin",
+    ]
+
+    initial_state_estimator: "gps_garmin" # will be used as the first state estimator
+    agl_height_estimator: "garmin_agl" # only slightly filtered height for checking min height (not used in control feedback)
+
+  uav_manager:
+
+    takeoff:
+
+      during_takeoff:
+        controller: "MpcController"
+        tracker: "LandoffTracker"
+
+      after_takeoff:
+        controller: "Se3Controller"
+        tracker: "MpcTracker"
+
+    midair_activation:
+
+      during_activation:
+        controller: "MidairActivationController"
+        tracker: "MidairActivationTracker"
+
+      after_activation:
+        controller: "MpcController"
+        tracker: "MpcTracker"
