@@ -151,7 +151,7 @@ class TaskRegistrator:
             try:
                 task_client.cancel_task()
             except CancelTaskFailedError as e:
-                raise TaskStartError("Failed to cancel previous task of same type.") from e
+                raise TaskStartError(f"Failed to cancel previous task of same type ({task_name}).") from e
 
     def _cancel_active_blocking_task(self) -> None:
         """Cancels the active blocking task if one is running.

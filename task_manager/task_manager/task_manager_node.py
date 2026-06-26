@@ -59,6 +59,7 @@ class TaskManager(Node):
     def __init__(self, active_tasks: ActiveTasks, parameter_overrides=None) -> None:
         super().__init__("task_manager", parameter_overrides=parameter_overrides)
 
+        self._default_cancel_timeout = self.declare_parameter("default_cancel_timeout", 5.0).value
         qos = QoSProfile(
             depth=10, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
@@ -122,7 +123,7 @@ class TaskManager(Node):
                 msg_interface=msg_interface,
                 task_server_type=detect_task_server_type(msg_interface),
                 service_success_field=service_success_field,
-                cancel_timeout=self.declare_parameter(f"{task}.cancel_timeout", 5.0).value,
+                cancel_timeout=self.declare_parameter(f"{task}.cancel_timeout", self._default_cancel_timeout).value,
             )
             self.known_tasks[task_specs.task_name] = task_specs
 

@@ -2,3 +2,4 @@ task_manager:
   ros__parameters:
     tasks: []
     enable_task_servers: False
+    default_task_timeout: 5.0
