@@ -26,6 +26,7 @@ from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 class TestParallelTaskExecutor(TaskManagerTestNode):
     """Tests the ParallelTaskExecutor task which executes multiple tasks in parallel."""
+
     def test_parallel_tasks(self):
         """When one task finishes, the others should be canceled and the PerformInParallel task should finish with DONE
         status."""
@@ -179,8 +180,9 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
     @staticmethod
     def parse_task_results(task_results: str) -> Dict[str, Dict[str, Any]]:
         """Parse the task results from a JSON string to a dictionary with task_id as key and the result as value."""
-        task_results = json.loads(task_results)
-        results = {}
-        for result in task_results["results"]:
+        parsed_result = json.loads(task_results)
+        results: Dict[str, Dict[str, Any]] = {}
+        for result in parsed_result["results"]:
             results[result["task_id"]] = result
+        print(f"Parsed task results: {results}")
         return results

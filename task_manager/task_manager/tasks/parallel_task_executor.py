@@ -121,7 +121,7 @@ class ParallelTaskExecutor(SystemTask):
 
             response = self._prepare_execute_task_result_cb(goal)
             task_client, error_code = self._start_single_task_cb(goal, response)
-            if error_code:
+            if error_code or task_client is None:
                 raise RuntimeError(
                     f"Failed to start task {subtask.task_name} with id {subtask.task_id}. Error code: {error_code}"
                 )

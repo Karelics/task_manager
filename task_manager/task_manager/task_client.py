@@ -62,6 +62,13 @@ class TaskClient(ABC):
     def cancel_task(self) -> None:
         """Cancel the task synchronously."""
 
+    @abstractmethod
+    def request_canceling(self) -> Future:
+        """Request canceling the task asynchronously.
+
+        :return: Future of the cancel request
+        """
+
 
 class ActionTaskClient(TaskClient):
     """Task client that keeps track of a single Action task."""

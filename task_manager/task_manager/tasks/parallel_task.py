@@ -113,7 +113,8 @@ class ParallelTask:
         if not self.require_finish_on_parallel_cancel():
             return True
 
-        return self._cancel_future.done()
+        # Mypy does not recognize that future.done returns a bool
+        return self._cancel_future.done()  # type: ignore[no-any-return]
 
     def require_finish_on_parallel_cancel(self) -> bool:
         """Checks if the task is expected to finish immediately after parallel cancel.

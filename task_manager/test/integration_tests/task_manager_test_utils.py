@@ -160,14 +160,14 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._get_response(future)
         return goal_handle
 
-    def execute_stop_task(self):
+    def execute_stop_task(self) -> ExecuteTask.Result:
         """Calls system/stop."""
         task_data = json.dumps(extract_values(StopTasks.Request()))
         goal = ExecuteTask.Goal(task_name="system/stop", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def execute_cancel_task(self, task_ids: List[str]):
+    def execute_cancel_task(self, task_ids: List[str]) -> ExecuteTask.Result:
         """Calls system/cancel_task with given task IDs."""
         cancel_goal = CancelTasks.Request()
         cancel_goal.cancelled_tasks = task_ids
@@ -176,7 +176,7 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def execute_wait_task(self, duration: float):
+    def execute_wait_task(self, duration: float) -> ExecuteTask.Result:
         """Calls system/wait with given  time."""
         wait_goal = Wait.Goal(duration=duration)
         task_data = json.dumps(extract_values(wait_goal))
@@ -184,7 +184,7 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def start_wait_task(self, duration: float, task_id: str = uuid.uuid4()) -> ClientGoalHandle:
+    def start_wait_task(self, duration: float, task_id: str = str(uuid.uuid4())) -> ClientGoalHandle:
         """Starts the wait task with given duration and returns the goal handle."""
         wait_goal = Wait.Goal(duration=duration)
         task_data = json.dumps(extract_values(wait_goal))
