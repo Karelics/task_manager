@@ -94,7 +94,7 @@ class ParallelTask:
             return
 
         self._logger.info(f"Canceling '{self.name}'")
-        self._cancel_future = self._task_client._request_canceling()
+        self._cancel_future = self._task_client.request_canceling()
 
     def has_canceled(self) -> bool:
         """Checks if the task has been cancelled.

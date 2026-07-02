@@ -163,7 +163,7 @@ class ActionTaskClient(TaskClient):
 
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         if self._goal_handle.status not in self.DONE_STATES:
-            future = self._request_canceling()
+            future = self.request_canceling()
             response = self._wait_for_cancel_to_finish(future, self._task_specs.cancel_timeout)
             self._handle_cancel_response(response)
             self._node.get_logger().info(f"Cancelling task of a type '{self.task_specs.task_name}'.")
@@ -180,7 +180,7 @@ class ActionTaskClient(TaskClient):
                 f"Is the task cancel implemented correctly?"
             )
 
-    def _request_canceling(self) -> Future:
+    def request_canceling(self) -> Future:
         """Requests canceling for the goal and returns future.
 
         :return: Future of the cancel request
@@ -374,8 +374,11 @@ class ServiceTaskClient(TaskClient):
         if not self.goal_done.wait(self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
 
-    def _request_canceling(self) -> Future:
-        """Calls cancel_task() method, which waits for the service to finish if it hasn't already."""
+    def request_canceling(self) -> Future:
+        """Calls cancel_task() method, which waits for the service to finish if it hasn't already.
+
+        Checking whether the canceling has been successful is left to the caller.
+        """
         try:
             self.cancel_task()
             future = Future()

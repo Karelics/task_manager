@@ -14,10 +14,10 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 import json
-from threading import Lock
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from threading import Lock
+from typing import Callable, List, Optional, Tuple
 
 # ROS
 import rclpy
@@ -30,8 +30,7 @@ from task_manager_msgs.action import ExecuteTask, PerformInParallel
 from task_manager_msgs.msg import SubtaskResult, TaskDoneResult, TaskStatus
 
 # Task Manager
-from task_manager.task_client import TaskClient, TaskStartError
-from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError
+from task_manager.task_client import TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.parallel_task import ParallelTask
 from task_manager.tasks.system_tasks import SystemTask
@@ -42,8 +41,14 @@ from task_manager.tasks.system_tasks import SystemTask
 class ParallelTaskExecutor(SystemTask):
     """This task executes a list of tasks in parallel."""
 
-    def __init__(self, node: Node, topic: str, results_pub: Publisher, mutex: Lock, 
-                 start_task_cb: Callable[[ExecuteTask.Goal], Tuple[Optional[TaskClient], str]]) -> None:
+    def __init__(
+        self,
+        node: Node,
+        topic: str,
+        results_pub: Publisher,
+        mutex: Lock,
+        start_task_cb: Callable[[ExecuteTask.Goal], Tuple[Optional[TaskClient], str]],
+    ) -> None:
         """
         :param node: Reference to a parent node
         :param topic: Topic name of the action server
@@ -76,6 +81,11 @@ class ParallelTaskExecutor(SystemTask):
         :param goal_handle: Handle of the action goal
         :return: Result of the action
         """
+        if len(goal_handle.request.subtasks) == 0:
+            self._node.get_logger().warning("No subtasks provided for parallel execution")
+            goal_handle.succeed()
+            return PerformInParallel.Result(message="WARNING: No subtasks provided for parallel execution")
+
         subtasks: List[ParallelTask] = []
         try:
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)

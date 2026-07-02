@@ -15,5 +15,6 @@
 task_manager_msgs/SubtaskGoal[] subtasks
 ---
 task_manager_msgs/SubtaskResult[] results
+string message
 ---
 # ToDo: we can provide subtask feedbacks as json string(s), but would it be better to create SubtaskFeedback message for this purpose?

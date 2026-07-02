@@ -91,14 +91,6 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
         # Publish the feedback
         goal_handle.publish_feedback(feedback_msg)
 
-    if not goal_handle.is_active:
-        goal_handle.abort()
-        return result
-
-    if goal_handle.is_cancel_requested:
-        goal_handle.canceled()
-        return result
-
     # Populate result message
     result.sequence = feedback_msg.sequence
     goal_handle.succeed()

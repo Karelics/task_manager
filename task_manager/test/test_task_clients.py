@@ -94,15 +94,15 @@ class TestActionTaskClient(unittest.TestCase):
         task_client = get_action_task_client("task_1")
         self.assertRaises(CancelTaskFailedError, task_client.cancel_task)
 
-    def test_request_canceling_no_goal_handle(self):
+    def testrequest_canceling_no_goal_handle(self):
         """Tests that we do not crash if goal handle does not exist."""
         task_client = get_action_task_client("task_1")
-        future = task_client._request_canceling()
+        future = task_client.request_canceling()
         self.assertIsInstance(future.exception(), CancelTaskFailedError)
 
     @patch("task_manager.task_client.ActionTaskClient._wait_for_cancel_to_finish")
-    @patch("task_manager.task_client.ActionTaskClient._request_canceling")
-    def test_cancel_task_no_result_future(self, mock_request_canceling: Mock, mock_wait_for_cancel_to_finish: Mock):
+    @patch("task_manager.task_client.ActionTaskClient.request_canceling")
+    def test_cancel_task_no_result_future(self, _mockrequest_canceling: Mock, mock_wait_for_cancel_to_finish: Mock):
         """Tests that we do not crash if result future does not exist."""
         cases = [
             {"case": "Unknown goal id", "return_code": CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID},
