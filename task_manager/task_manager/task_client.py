@@ -163,7 +163,8 @@ class ActionTaskClient(TaskClient):
 
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         if self._goal_handle.status not in self.DONE_STATES:
-            response = self._request_canceling(self._task_specs.cancel_timeout)
+            future = self._request_canceling()
+            response = self._wait_for_cancel_to_finish(future, self._task_specs.cancel_timeout)
             self._handle_cancel_response(response)
             self._node.get_logger().info(f"Cancelling task of a type '{self.task_specs.task_name}'.")
         else:
@@ -179,16 +180,20 @@ class ActionTaskClient(TaskClient):
                 f"Is the task cancel implemented correctly?"
             )
 
-    def _request_canceling(self, timeout: float) -> CancelGoal.Response:
-        """Requests canceling for the goal and returns the cancel response.
+    def _request_canceling(self) -> Future:
+        """Requests canceling for the goal and returns future.
 
-        :raises CancelTaskFailedError: If the cancel request timed out
-        :param timeout: Time to wait for cancel request to pass
-        :return: CancelGoal.Response
+        :return: Future of the cancel request
         """
         if not self._goal_handle:
-            raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
-        future = self._goal_handle.cancel_goal_async()
+            future = Future()
+            future.set_exception(CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!"))
+            return future
+
+        return self._goal_handle.cancel_goal_async()
+
+    def _wait_for_cancel_to_finish(self, future: Future, timeout: float) -> CancelGoal.Response:
+        """Waits for the cancel request to finish and returns the cancel response."""
         try:
             self._wait_for_future_to_complete(future, timeout=timeout)
         except TimeoutError as e:
@@ -368,6 +373,17 @@ class ServiceTaskClient(TaskClient):
         )
         if not self.goal_done.wait(self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
+
+    def _request_canceling(self) -> Future:
+        """Calls cancel_task() method, which waits for the service to finish if it hasn't already."""
+        try:
+            self.cancel_task()
+            future = Future()
+            # Set the future as FINISHED (done)
+            future.set_result("")
+            return future
+        except CancelTaskFailedError:
+            return Future()
 
     def _done_callback(self, future):
         self.task_details.result = future.result()

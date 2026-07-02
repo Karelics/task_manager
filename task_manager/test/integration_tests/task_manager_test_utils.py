@@ -40,7 +40,7 @@ from example_interfaces.action import Fibonacci
 from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
-from task_manager_msgs.action import ExecuteTask, Wait
+from task_manager_msgs.action import ExecuteTask, PerformInParallel, Wait
 from task_manager_msgs.msg import ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, StopTasks
 
@@ -72,6 +72,7 @@ class TaskManagerTestNode(unittest.TestCase):
         params.add_fibonacci_task(task_name="fibonacci_cancel_on_stop", cancel_on_stop=True)
         params.add_fibonacci_task(task_name="fibonacci_non_cancelable", cancel_on_stop=True)
         params.add_service_task_add_two_ints(task_name="add_two_ints", blocking=True)
+        params.add_service_task_add_two_ints(task_name="add_two_ints_non_blocking", blocking=False)
 
         self.task_manager_node: TaskManager = TaskManager(
             active_tasks=ActiveTasks(), parameter_overrides=params.get_params()
@@ -190,6 +191,13 @@ class TaskManagerTestNode(unittest.TestCase):
         goal = ExecuteTask.Goal(task_id=task_id, task_name="system/wait", task_data=task_data, source="")
         return self._start_task(goal)
 
+    def run_parallel_tasks(self, goal: PerformInParallel.Goal) -> ClientGoalHandle:
+        """Starts the parallel task executor with given goal and returns the goal handle."""
+        parallel_task_goal = ExecuteTask.Goal(
+            task_name="system/perform_in_parallel", task_data=json.dumps(extract_values(goal)), source="TEST"
+        )
+        return self._start_task(parallel_task_goal)
+
 
 class TestTasksNode(Node):
     """Launches test action servers, each with different behavior or task configuration."""
@@ -203,6 +211,9 @@ class TestTasksNode(Node):
         self.fib_cancel_on_stop_server = create_fib_action_server(node=self, action_name="fibonacci_cancel_on_stop")
         self.fib_non_cancelable = create_fib_action_server(node=self, action_name="fibonacci_non_cancelable")
         self.add_two_ints = create_add_two_ints_service(node=self, service_name="add_two_ints")
+        self.add_two_ints_non_blocking = create_add_two_ints_service(
+            node=self, service_name="add_two_ints_non_blocking"
+        )
 
         self.fib_non_cancelable.register_cancel_callback(self._cancel_cb)
 

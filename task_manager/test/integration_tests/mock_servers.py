@@ -29,7 +29,10 @@ from example_interfaces.srv import AddTwoInts
 
 
 def create_fib_action_server(node: Node, action_name: str) -> ActionServer:
-    """Action server that execution time depends on the given Fibonacci goal."""
+    """Action server that execution time depends on the given Fibonacci goal.
+
+    Aborts the goal if the order is less than 0.
+    """
     return ActionServer(
         node=node,
         action_type=Fibonacci,
@@ -48,6 +51,10 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
     """Implementation of the fibonacci action server."""
     request = goal_handle.request
     result = Fibonacci.Result()
+
+    if request.order < 0:
+        goal_handle.abort()
+        return result
 
     # Append the seeds for the Fibonacci sequence
     feedback_msg = Fibonacci.Feedback()

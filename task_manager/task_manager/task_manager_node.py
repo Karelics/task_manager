@@ -48,6 +48,7 @@ from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
+from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService, WaitTask
 from task_manager.tasks.task_action_server import TaskActionServer
 from task_manager.tasks.task_service_server import TaskServiceServer
@@ -124,6 +125,9 @@ class TaskManager(Node):
                 task_server_type=detect_task_server_type(msg_interface),
                 service_success_field=service_success_field,
                 cancel_timeout=self.declare_parameter(f"{task}.cancel_timeout", self._default_cancel_timeout).value,
+                require_finish_on_parallel_cancel=self.declare_parameter(
+                    f"{task}.require_finish_on_parallel_cancel", True
+                ).value,
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
@@ -153,6 +157,7 @@ class TaskManager(Node):
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
+        parallel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/perform_in_parallel"
 
         if not self._enable_task_servers:
             # Make services hidden. Actions cannot be hidden in a same way as services are,
@@ -164,11 +169,19 @@ class TaskManager(Node):
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
+        parallel = ParallelTaskExecutor(
+            self,
+            topic=parallel_topic,
+            results_pub=self.results_pub,
+            mutex=self.mutex,
+            start_task_cb=self._start_task,
+        )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
+        self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
