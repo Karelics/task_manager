@@ -13,21 +13,18 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  ------------------------------------------------------------------
-import json
 import time
 import uuid
-from threading import Lock
 from typing import Callable, List, Optional, Tuple
 
 # ROS
 import rclpy
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
 from rclpy.node import Node
-from rclpy.publisher import Publisher
 
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask, PerformInParallel
-from task_manager_msgs.msg import SubtaskResult, TaskDoneResult, TaskStatus
+from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_client import TaskClient
@@ -45,17 +42,14 @@ class ParallelTaskExecutor(SystemTask):
         self,
         node: Node,
         topic: str,
-        results_pub: Publisher,
-        mutex: Lock,
-        start_task_cb: Callable[[ExecuteTask.Goal], Tuple[Optional[TaskClient], str]],
+        prepare_execute_task_result_cb: Callable[[ExecuteTask.Goal], ExecuteTask.Result],
+        start_single_task_cb: Callable[[ExecuteTask.Goal, ExecuteTask.Result], Tuple[Optional[TaskClient], str]],
     ) -> None:
         """
         :param node: Reference to a parent node
         :param topic: Topic name of the action server
-        :param known_tasks: Dictionary of known tasks
-        :param results_pub: Publisher for publishing task results
-        :param mutex: Mutex for synchronizing access to shared resources
-        :param start_task_cb: Callback function to start a new task
+        :param prepare_execute_task_result_cb: Callback to prepare the ExecuteTask.Result message with the task_id
+        :param start_single_task_cb: Callback to start a single task and return the TaskClient and an error code
         """
         self._node = node
         self._parallel_executor_server = ActionServer(
@@ -67,9 +61,8 @@ class ParallelTaskExecutor(SystemTask):
         )
         self._timeout = self._node.declare_parameter("parallel_executor_task.cancel_timeout", 5.0).value
 
-        self._mutex = mutex
-        self.results_pub = results_pub
-        self._start_task_cb = start_task_cb
+        self._prepare_execute_task_result_cb = prepare_execute_task_result_cb
+        self._start_single_task_cb = start_single_task_cb
 
     def _cancel_cb(self, _goal_handle: ServerGoalHandle) -> CancelResponse:
         self._node.get_logger().info("Cancel request received for parallel executor")
@@ -120,42 +113,15 @@ class ParallelTaskExecutor(SystemTask):
         :raises RuntimeError: If some task fails to start
         """
         for subtask in goal_handle.request.subtasks:
-            # TODO: DUPLICATE stuff
-            if subtask.task_id == "":
-                subtask.task_id = str(uuid.uuid4())
-
-            response = ExecuteTask.Result()
-            response.task_id = subtask.task_id
-
             parent_id = str(uuid.UUID(bytes=bytes(goal_handle.goal_id.uuid)))
             source = f"ParallelExecutor-{parent_id}"
             goal = ExecuteTask.Goal(
                 task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source=source
             )
 
-            # Mutex lock required, since we need to be sure that the previous blocking task has
-            # truly finished before we try to start another one from another thread.
-            self._node.get_logger().info(f"Starting task {subtask.task_name}")
-            with self._mutex:
-                task_client, error_code = self._start_task_cb(goal)
-
+            response = self._prepare_execute_task_result_cb(goal)
+            task_client, error_code = self._start_single_task_cb(goal, response)
             if error_code:
-                response.task_status = TaskStatus.ERROR
-                response.error_code = error_code
-                response.task_result = json.dumps({})
-
-                # Normally the done result is published automatically when task_client has finished. Now we are not
-                # creating the task_client at all, since the task has failed while trying to start it.
-                self.results_pub.publish(
-                    TaskDoneResult(
-                        task_id=subtask.task_id,
-                        task_name=subtask.task_name,
-                        task_status=response.task_status,
-                        error_code=response.error_code,
-                        source=source,
-                        task_result=response.task_result,
-                    )
-                )
                 raise RuntimeError(
                     f"Failed to start task {subtask.task_name} with id {subtask.task_id}. Error code: {error_code}"
                 )
@@ -191,6 +157,7 @@ class ParallelTaskExecutor(SystemTask):
 
             time.sleep(0.1)
 
+    # TODO: Refactor this method to smaller methods
     def _cancel_remaining_tasks_and_get_results(
         self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]
     ) -> PerformInParallel.Result:

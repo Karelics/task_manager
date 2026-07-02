@@ -172,9 +172,8 @@ class TaskManager(Node):
         parallel = ParallelTaskExecutor(
             self,
             topic=parallel_topic,
-            results_pub=self.results_pub,
-            mutex=self.mutex,
-            start_task_cb=self._start_task,
+            prepare_execute_task_result_cb=self._prepare_execute_task_result,
+            start_single_task_cb=self._start_single_task,
         )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
@@ -200,12 +199,37 @@ class TaskManager(Node):
 
     def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None) -> ExecuteTask.Result:
         """Execute a single task."""
+        response = self._prepare_execute_task_result(request)
+        task_client, error_code = self._start_single_task(request, response)
+        if error_code:
+            return response
+
+        try:
+            response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
+        except CancelTaskFailedError as e:
+            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {repr(e)}")
+            response.task_status = TaskStatus.IN_PROGRESS
+            response.error_code = response.ERROR_TASK_CANCEL_FAILED
+
+        return response
+
+    def _prepare_execute_task_result(self, request: ExecuteTask.Goal) -> ExecuteTask.Result:
+        """Prepares the ExecuteTask.Result message with the task_id from the request."""
         if request.task_id == "":
             request.task_id = str(uuid.uuid4())
 
         response = ExecuteTask.Result()
         response.task_id = request.task_id
+        return response
 
+    def _start_single_task(self, request: ExecuteTask.Goal, response: ExecuteTask.Result) -> Tuple[TaskClient, str]:
+        """Starts a single task and handles error reporting.
+
+        :param request: ExecuteTask.Goal message containing the task to be started
+        :param response: ExecuteTask.Result message to be filled with error code if starting the task fails
+        :return: If tasks starts successfully, returns the TaskClient and None.
+          If starting the task fails, returns None and the error code.
+        """
         # Mutex lock required, since we need to be sure that the previous blocking task has
         # truly finished before we try to start another one from another thread.
         with self.mutex:
@@ -228,16 +252,8 @@ class TaskManager(Node):
                     task_result=response.task_result,
                 )
             )
-            return response
 
-        try:
-            response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
-        except CancelTaskFailedError as e:
-            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {repr(e)}")
-            response.task_status = TaskStatus.IN_PROGRESS
-            response.error_code = response.ERROR_TASK_CANCEL_FAILED
-
-        return response
+        return task_client, error_code
 
     @staticmethod
     def _cancel_cb(_goal_handle):

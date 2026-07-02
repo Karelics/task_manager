@@ -35,6 +35,7 @@ from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 
 # pylint: disable=protected-access
 
+
 @pytest.fixture(name="parallel_task_executor")
 def fixture_parallel_task_executor() -> Generator[ParallelTaskExecutor, None, None]:
     """Fixture for creating a ParallelTaskExecutor instance."""
@@ -42,9 +43,8 @@ def fixture_parallel_task_executor() -> Generator[ParallelTaskExecutor, None, No
     pte = ParallelTaskExecutor(
         node=Node("test_node"),
         topic="/test/parallel_task_executor",
-        results_pub=MagicMock(spec=rclpy.publisher.Publisher),
-        mutex=MagicMock(),
-        start_task_cb=MagicMock(),
+        prepare_execute_task_result_cb=lambda goal: PerformInParallel.Result(task_id=goal.task_id),
+        start_single_task_cb=lambda goal, response: (MagicMock(), None),
     )
     yield pte
     pte._node.destroy_node()
