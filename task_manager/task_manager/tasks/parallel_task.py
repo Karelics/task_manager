@@ -90,6 +90,7 @@ class ParallelTask:
     def cancel_async(self) -> None:
         """Triggers cancel for the task if it hasn't been cancelled or finished yet."""
         if not self.active:
+            self._logger.info(f"'{self.name}' is already canceled or finished, no need to cancel again")
             # Already canceled or finished, no need to cancel again
             return
 
@@ -97,24 +98,16 @@ class ParallelTask:
         self._cancel_future = self._task_client.request_canceling()
 
     def has_canceled(self) -> bool:
-        """Checks if the task has been cancelled.
+        """Checks if the goal has been set as done.
 
-        For tasks with require_finish_on_parallel_cancel set to False, further processing is being
-        done after canceling the task and they are not expected to finish within the cancelation timeouts.
-        Thus returning True from this method. For example, insta video recording, will download the file
-        from the camera and that will take some time.
+        Goal is being set as done when the task has been canceled or finished.
 
-        :return: True if the task has been cancelled successfully or require_finish_on_parallel_cancel is set to False,
-          otherwise False
+        :return: True if the task has been cancelled successfully, otherwise False
         """
         if not self._cancel_future:
             return False
 
-        if not self.require_finish_on_parallel_cancel():
-            return True
-
-        # Mypy does not recognize that future.done returns a bool
-        return self._cancel_future.done()  # type: ignore[no-any-return]
+        return self._task_client.goal_done
 
     def require_finish_on_parallel_cancel(self) -> bool:
         """Checks if the task is expected to finish immediately after parallel cancel.

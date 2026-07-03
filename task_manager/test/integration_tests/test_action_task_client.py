@@ -84,7 +84,7 @@ class TestActionTaskClient(unittest.TestCase):
         client.start_task_async(Fibonacci.Goal(order=1))
 
         self.assertEqual(client.task_details.status, TaskStatus.IN_PROGRESS)
-        client.goal_done.wait(timeout=5)
+        client._goal_done.wait(timeout=5)
         self.assertEqual(client.task_details.status, TaskStatus.DONE)
         self.assertEqual(client.task_details.result, Fibonacci.Result(sequence=[0, 1]))
 
@@ -111,7 +111,7 @@ class TestActionTaskClient(unittest.TestCase):
         with self.assertRaises(TaskStartError):
             client.start_task_async(Fibonacci.Goal(order=1))
         self.assertEqual(client.task_details.status, TaskStatus.ERROR)
-        client.goal_done.wait(5)
+        client._goal_done.wait(5)
 
     def test_start_task_async_server_not_accepting_goal(self):
         """Action server rejects the goal when trying to start the task."""
@@ -171,7 +171,7 @@ class TestActionTaskClient(unittest.TestCase):
         self.assertEqual(client.task_details.status, TaskStatus.IN_PROGRESS)
 
         # Finally, wait for the goal to finish to avoid error logs
-        client.goal_done.wait(timeout=5)
+        client._goal_done.wait(timeout=5)
 
     def test_cancel_task_takes_too_long(self):
         """Action takes too long to actually cancel the task."""
@@ -190,7 +190,7 @@ class TestActionTaskClient(unittest.TestCase):
 
         self.assertEqual(client.task_details.status, TaskStatus.IN_PROGRESS)
         # Finally, wait for the goal to finish to avoid error logs
-        client.goal_done.wait(timeout=5)
+        client._goal_done.wait(timeout=5)
 
     def test_cancel_task_goal_not_known_by_server(self) -> None:
         """Action server doesn't know the goal when trying to cancel it."""
@@ -205,7 +205,7 @@ class TestActionTaskClient(unittest.TestCase):
         """Checks that calling cancel after a task finished does not change the task's end status."""
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
         client.start_task_async(Fibonacci.Goal(order=0))
-        client.goal_done.wait(timeout=1)
+        client._goal_done.wait(timeout=1)
         client.cancel_task()
         self.assertEqual(client.task_details.status, TaskStatus.DONE)
 
@@ -223,7 +223,7 @@ class TestActionTaskClient(unittest.TestCase):
         client.start_task_async(Fibonacci.Goal(order=0))
         sleep(0.3)  # Have the goal finish (at least on the server side) before canceling
         client.cancel_task()
-        client.goal_done.wait(timeout=1)
+        client._goal_done.wait(timeout=1)
         self.assertEqual(client.task_details.status, TaskStatus.DONE)
 
 

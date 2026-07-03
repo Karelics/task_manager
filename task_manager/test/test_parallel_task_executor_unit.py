@@ -28,7 +28,7 @@ import pytest
 from task_manager_msgs.action import PerformInParallel
 
 # Task Manager
-from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
+from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor, PreemptedException
 
 # This test file covers the lines which are difficult to cover with integration tests
 # (./integration_tests/test_parallel_task_executor.py)
@@ -73,3 +73,11 @@ def test_perform_in_parallel_cb_rclpy_not_ok(
     result = parallel_task_executor.perform_in_parallel_cb(goal_handle)
     assert result == PerformInParallel.Result()
     assert goal_handle.abort.called_once()
+
+
+def test_gather_and_try_preempt(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """Test that _gather_and_try_to_run_subtasks preempts tasks when the latest goal handle is different."""
+    goal_handle = MagicMock()
+    goal_handle.request.subtasks = [MagicMock(), MagicMock()]
+    parallel_task_executor._latest_goal_handle = MagicMock()
+    assert pytest.raises(PreemptedException, parallel_task_executor._gather_and_try_to_run_subtasks, goal_handle, [])

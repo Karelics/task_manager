@@ -14,6 +14,7 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 import json
+import time
 from typing import Any, Dict
 
 # Thirdparty
@@ -101,7 +102,7 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         """Tests handling of the cancel timeout.
 
         Calling add_two_ints service with a sum which is higher than the cancel timeout since the service is built to
-        sleep the sum of the integers seconds.
+        sleep the sum of the integers seconds. Wait task will finish and attempt to cancel the service.
         """
         goal = PerformInParallel.Goal(
             subtasks=[
@@ -121,21 +122,113 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
     def test_cancel_timeout_allowed_to_continue(self):
         """If the task is allowed to continue, the PerformInParallel task should finish with DONE status even if the
         cancel does not succeed within the timeout."""
+        self.task_manager_node.known_tasks["add_two_ints_non_blocking"].require_finish_on_parallel_cancel = False
         goal = PerformInParallel.Goal(
             subtasks=[
-                SubtaskGoal(task_id="fib", task_name="add_two_ints_non_blocking", task_data='{"a": 3, "b": 3}'),
+                SubtaskGoal(task_id="add", task_name="add_two_ints_non_blocking", task_data='{"a": 3, "b": 3}'),
                 SubtaskGoal(task_id="wait", task_name="system/wait", task_data='{"duration": 1.0}'),
             ]
         )
-        self.task_manager_node.known_tasks["add_two_ints_non_blocking"].require_finish_on_parallel_cancel = False
 
         goal_handle = self.run_parallel_tasks(goal)
         response = goal_handle.get_result()
 
         subtask_results = self.parse_task_results(response.result.task_result)
         self.assertEqual(response.result.task_status, TaskStatus.DONE)
-        self.assertEqual(subtask_results["fib"]["task_status"], TaskStatus.DONE)
+        self.assertEqual(subtask_results["add"]["task_status"], TaskStatus.IN_PROGRESS)
         self.assertEqual(subtask_results["wait"]["task_status"], TaskStatus.DONE)
+
+    def test_cancel_by_calling_perform_in_parallel_again(self):
+        """If the PerformInParallel task is called again, the previous one should be canceled."""
+        self.task_manager_node.known_tasks["fibonacci"].require_finish_on_parallel_cancel = False
+
+        goal1 = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 20}'),
+                SubtaskGoal(task_id="wait", task_name="system/wait", task_data='{"duration": 30.0}'),
+            ]
+        )
+        goal_handle1 = self.run_parallel_tasks(goal1)
+
+        time.sleep(1.0)  # Wait a bit to make sure the first goal has started executing
+        goal2 = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib2", task_name="fibonacci", task_data='{"order": 3}'),
+                SubtaskGoal(task_id="wait2", task_name="system/wait", task_data='{"duration": 3.5}'),
+            ]
+        )
+        goal_handle2 = self.run_parallel_tasks(goal2)
+
+        response1 = goal_handle1.get_result()
+        response2 = goal_handle2.get_result()
+
+        subtask_results1 = self.parse_task_results(response1.result.task_result)
+        subtask_results2 = self.parse_task_results(response2.result.task_result)
+
+        self.assertEqual(response1.result.task_status, TaskStatus.ERROR)
+        self.assertEqual(subtask_results1["fib"]["task_status"], TaskStatus.CANCELED)
+        self.assertEqual(subtask_results1["wait"]["task_status"], TaskStatus.CANCELED)
+
+        self.assertEqual(response2.result.task_status, TaskStatus.DONE)
+        self.assertEqual(subtask_results2["fib2"]["task_status"], TaskStatus.DONE)
+        self.assertEqual(subtask_results2["wait2"]["task_status"], TaskStatus.CANCELED)
+
+    def test_cancel_by_calling_perform_in_parallel_again_slowly_canceling_task(self):
+        """If the PerformInParallel task is called again, the previous one should be canceled."""
+        self.task_manager_node.known_tasks["fibonacci"].require_finish_on_parallel_cancel = False
+        self.task_manager_node.known_tasks["fibonacci"].cancel_timeout = 1.0
+
+        goal1 = PerformInParallel.Goal(
+            subtasks=[
+                # Values over 50 will cause the server to sleep for a bit, simulating a slow canceling action server
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 55}'),
+                SubtaskGoal(task_id="wait", task_name="system/wait", task_data='{"duration": 30.0}'),
+            ]
+        )
+        goal_handle1 = self.run_parallel_tasks(goal1)
+
+        time.sleep(1.0)  # Wait a bit to make sure the first goal has started executing
+        goal2 = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib2", task_name="fibonacci", task_data='{"order": 3}'),
+                SubtaskGoal(task_id="wait2", task_name="system/wait", task_data='{"duration": 3.5}'),
+            ]
+        )
+        goal_handle2 = self.run_parallel_tasks(goal2)
+
+        response1 = goal_handle1.get_result()
+        response2 = goal_handle2.get_result()
+
+        subtask_results1 = self.parse_task_results(response1.result.task_result)
+        subtask_results2 = self.parse_task_results(response2.result.task_result)
+
+        self.assertEqual(response1.result.task_status, TaskStatus.ERROR)
+        self.assertEqual(subtask_results1["fib"]["task_status"], TaskStatus.IN_PROGRESS)
+        self.assertEqual(subtask_results1["wait"]["task_status"], TaskStatus.CANCELED)
+
+        self.assertEqual(response2.result.task_status, TaskStatus.DONE)
+        self.assertEqual(subtask_results2["fib2"]["task_status"], TaskStatus.DONE)
+        self.assertEqual(subtask_results2["wait2"]["task_status"], TaskStatus.CANCELED)
+
+    def test_handle_results_when_task_in_middle_fails_to_start(self):
+        """If a task in the middle fails to start, the PerformInParallel task should set CANCELED status for the
+        remaining tasks which were not started."""
+        goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="fib2", task_name="fibonacci_2", task_data='{"invalid": 1}'),
+                SubtaskGoal(task_id="wait", task_name="system/wait", task_data='{"duration": 3.0}'),
+            ]
+        )
+
+        goal_handle = self.run_parallel_tasks(goal)
+        response = goal_handle.get_result()
+
+        subtask_results = self.parse_task_results(response.result.task_result)
+        self.assertEqual(response.result.task_status, TaskStatus.ERROR)
+        self.assertEqual(subtask_results["fib"]["task_status"], TaskStatus.CANCELED)
+        self.assertEqual(subtask_results["fib2"]["task_status"], TaskStatus.ERROR)
+        self.assertEqual(subtask_results["wait"]["task_status"], TaskStatus.CANCELED)
 
     def test_tasks_without_ids(self):
         """If the tasks do not have task_ids, they should be automatically assigned unique task_ids."""

@@ -290,7 +290,7 @@ class TaskManager(Node):
 
         :raises CancelTaskFailedError: If the task cancellation fails
         """
-        while rclpy.ok() and not task_client.goal_done.is_set():
+        while rclpy.ok() and not task_client.goal_done:
             if goal_handle and goal_handle.is_cancel_requested:
                 task_client.cancel_task()
                 break

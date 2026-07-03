@@ -274,6 +274,7 @@ class TaskManagerNodeParams:
         """Returns the Task Manager parameters."""
         self._params.append(Parameter(name="tasks", value=self._tasks))
         self._params.append(Parameter(name="enable_task_servers", value=True))
+        self._params.append(Parameter(name="parallel_executor_task.cancel_timeout", value=1.5))
         return self._params
 
 

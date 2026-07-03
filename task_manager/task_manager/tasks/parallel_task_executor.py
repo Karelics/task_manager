@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 import time
 import uuid
+from threading import Lock
 from typing import Callable, List, Optional, Tuple
 
 # ROS
@@ -52,21 +53,27 @@ class ParallelTaskExecutor(SystemTask):
         :param start_single_task_cb: Callback to start a single task and return the TaskClient and an error code
         """
         self._node = node
+        self._logger = node.get_logger().get_child("ParallelTask")
         self._parallel_executor_server = ActionServer(
             self._node,
             PerformInParallel,
             action_name=topic,
-            execute_callback=self.perform_in_parallel_cb,
+            execute_callback=self._execute_cb,
             cancel_callback=self._cancel_cb,
+            handle_accepted_callback=self._handle_accepted_cb,
         )
         self._timeout = self._node.declare_parameter("parallel_executor_task.cancel_timeout", 5.0).value
+
+        self._latest_goal_handle: Optional[ServerGoalHandle] = None
+        self._execution_lock = Lock()
 
         self._prepare_execute_task_result_cb = prepare_execute_task_result_cb
         self._start_single_task_cb = start_single_task_cb
 
-    def _cancel_cb(self, _goal_handle: ServerGoalHandle) -> CancelResponse:
-        self._node.get_logger().info("Cancel request received for parallel executor")
-        return CancelResponse.ACCEPT
+    def _execute_cb(self, goal_handle: ServerGoalHandle) -> PerformInParallel.Result:
+        """Wraps the perform_in_parallel_cb method to acquire a lock before executing the parallel tasks."""
+        with self._execution_lock:
+            return self.perform_in_parallel_cb(goal_handle)
 
     def perform_in_parallel_cb(self, goal_handle: ServerGoalHandle) -> PerformInParallel.Result:
         """Parses, starts and waits for the subtasks to complete.
@@ -75,7 +82,7 @@ class ParallelTaskExecutor(SystemTask):
         :return: Result of the action
         """
         if len(goal_handle.request.subtasks) == 0:
-            self._node.get_logger().warning("No subtasks provided for parallel execution")
+            self._logger.warning("No subtasks provided for parallel execution")
             goal_handle.succeed()
             return PerformInParallel.Result(message="WARNING: No subtasks provided for parallel execution")
 
@@ -84,19 +91,20 @@ class ParallelTaskExecutor(SystemTask):
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)
             self._wait_actions_done(goal_handle, subtasks)
 
-        # TODO: Where can the TimeoutError and ValueError come from?
-        except (TimeoutError, ValueError, RuntimeError) as e:
+        except RuntimeError as e:
             # Some task failed to start or finish
-            self._node.get_logger().error(f"Error while executing parallel actions: {repr(e)}")
+            self._logger.error(f"Error while executing parallel actions: {repr(e)}")
+
+        except PreemptedException:
+            self._logger.info("Parallel task was preempted by a new goal")
 
         if not rclpy.ok():
-            self._node.get_logger().error("Parallel execution task failed due to rclpy not being ok.")
+            self._logger.error("Parallel execution task failed due to rclpy not being ok.")
             # Have nothing to do here if rclpy fails
             goal_handle.abort()
             return PerformInParallel.Result()
 
         result = self._cancel_remaining_tasks_and_get_results(goal_handle, subtasks)
-        self._node.get_logger().info(f"Parallel execution task finished with result: {result}")
         return result
 
     def _gather_and_try_to_run_subtasks(
@@ -113,6 +121,9 @@ class ParallelTaskExecutor(SystemTask):
         :raises RuntimeError: If some task fails to start
         """
         for subtask in goal_handle.request.subtasks:
+            if self._latest_goal_handle != goal_handle:
+                raise PreemptedException("Parallel task was preempted")
+
             parent_id = str(uuid.UUID(bytes=bytes(goal_handle.goal_id.uuid)))
             source = f"ParallelExecutor-{parent_id}"
             goal = ExecuteTask.Goal(
@@ -126,7 +137,7 @@ class ParallelTaskExecutor(SystemTask):
                     f"Failed to start task {subtask.task_name} with id {subtask.task_id}. Error code: {error_code}"
                 )
 
-            new_task = ParallelTask(task_client, self._timeout, self._node.get_logger())
+            new_task = ParallelTask(task_client, self._timeout, self._logger)
             new_task.set_source(source)
             subtasks.append(new_task)
 
@@ -140,24 +151,23 @@ class ParallelTaskExecutor(SystemTask):
         """
         while rclpy.ok():
             if goal_handle.is_cancel_requested:
-                self._node.get_logger().info("Cancel requested for parallel task.")
-                goal_handle.canceled()
+                self._logger.info("Cancel requested for parallel task.")
                 return
 
             if not goal_handle.is_active:
-                self._node.get_logger().warning("Goal handle is not active, aborting parallel tasks.")
+                self._logger.warning("Goal handle is not active, aborting parallel tasks.")
                 return
+
+            if self._latest_goal_handle != goal_handle:
+                raise PreemptedException("Parallel task was preempted")
 
             for action in subtasks:
                 if not action.active:
-                    self._node.get_logger().info(
-                        f"Action '{action.name}' finished. The whole parallel action will be cancelled"
-                    )
+                    self._logger.info(f"Action '{action.name}' finished. The whole parallel action will be cancelled")
                     return
 
             time.sleep(0.1)
 
-    # TODO: Refactor this method to smaller methods
     def _cancel_remaining_tasks_and_get_results(
         self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]
     ) -> PerformInParallel.Result:
@@ -168,21 +178,55 @@ class ParallelTaskExecutor(SystemTask):
         :return: The overall PerformInParallel.Result
         """
         result = PerformInParallel.Result()
-        any_done = False
-        any_failed = False
 
-        # Try to cancel all tasks
+        self._cancel_tasks_and_wait_for_finish(subtasks)
+        any_done, any_failed = self._get_results(subtasks, result)
+        any_failed = any_failed or self._set_results_for_unstarted_tasks(goal_handle.request.subtasks, result)
+
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        elif any_failed:
+            goal_handle.abort()
+        elif any_done:
+            goal_handle.succeed()
+        else:
+            self._logger.info("All tasks were canceled, aborting the goal")
+            goal_handle.abort()
+
+        return result
+
+    def _cancel_tasks_and_wait_for_finish(self, subtasks: List[ParallelTask]) -> bool:
+        """Cancels tasks that have been already launched asynchronously and waits for them to finish.
+
+        Makes use of `cancel_timeout` parameter to limit the waiting time.
+
+        :param subtasks: Reference to the list of tasks to cancel.
+        :return: True if all tasks have been cancelled, False if timeout has been reached
+        """
         for task in subtasks:
             task.cancel_async()
 
         cancel_timeout_start = time.time()
         while rclpy.ok() and (time.time() - cancel_timeout_start < self._timeout):
             if all(task.has_canceled() for task in subtasks):
-                break
+                return True
             time.sleep(0.1)
 
-        # Note: Aborted task can have both ERROR or IN_PROGRESS statuses.
-        # IN_PROGRESS status will be preserved if cancelling this action has been failed
+        # Check if some task is still running but is allowed to continue running after cancelation
+        if all(task.has_canceled() or not task.require_finish_on_parallel_cancel() for task in subtasks):
+            return True
+        return False
+
+    def _get_results(self, subtasks: List[ParallelTask], result: PerformInParallel.Result) -> Tuple[bool, bool]:
+        """Retrieves results of the tasks and fills the PerformInParallel.Result message.
+
+        :param subtasks: Reference to the list of tasks to get results from.
+        :param result: Reference to the PerformInParallel.Result message to fill with results.
+        :return: Tuple of two booleans: (any_done, any_failed) representing whether any task was done or failed.
+        """
+        any_done = False
+        any_failed = False
+
         for task in subtasks:
             task_result = task.get_result()
             result.results.append(task_result)
@@ -193,51 +237,50 @@ class ParallelTaskExecutor(SystemTask):
                 or (task_result.task_status == TaskStatus.IN_PROGRESS and task.require_finish_on_parallel_cancel())
             )
 
-        # Since our tasks are started in the same order as they provided in the goal handle, here our
-        # list of results contains the results of N first tasks that were able to start. If the length of the result
-        # list is smaller than list of SubtaskGoals -> this means that the next task has failed to start and other
-        # tasks after it didn't even try to be started.
+        return any_done, any_failed
+
+    def _set_results_for_unstarted_tasks(
+        self, requested_tasks: List[SubtaskResult], result: PerformInParallel.Result
+    ) -> bool:
+        """Sets results for tasks that were not started and fills the PerformInParallel.Result message.
+
+        Len(result.results) tasks have started, which means the next one has failed and will be set to ERROR.
+        The rest did not have a chance to get started and will be set to CANCELED and skipped.
+
+        :param requested_tasks: Reference to the list of requested tasks from the original goal request.
+        :param result: Reference to the PerformInParallel.Result message to fill with results.
+        :return: True if any task was not started, False otherwise.
+        """
         result_len = len(result.results)
-        if result_len < len(goal_handle.request.subtasks):
+        if result_len < len(requested_tasks):
             result.results.append(
                 SubtaskResult(
-                    task_id=goal_handle.request.subtasks[result_len].task_id,
-                    task_name=goal_handle.request.subtasks[result_len].task_name,
+                    task_id=requested_tasks[result_len].task_id,
+                    task_name=requested_tasks[result_len].task_name,
                     skipped=False,
                     task_status=TaskStatus.ERROR,
                 )
             )
-            any_failed = True  # Set this flag unconditionally since we have at least one task failed to start
 
             # Other tasks (if any left) were not even tried to start, so they are CANCELLED and skipped
             result.results.extend(
                 SubtaskResult(
-                    task_id=action.task_id,
-                    task_name=action.task_name,
+                    task_id=task.task_id,
+                    task_name=task.task_name,
                     skipped=True,
                     task_status=TaskStatus.CANCELED,
                 )
-                for action in goal_handle.request.subtasks[result_len + 1 :]
+                for task in requested_tasks[result_len + 1 :]
             )
+            return True
+        return False
 
-        if goal_handle.is_active:
-            # Goal is active here if some task was done or failed while this parallel task is still active,
-            # we consider this task to be aborted if any task has failed, then if any task done (while others are still
-            # active) we consider this as success. And finally: if no tasks failed and no task done - then we assume
-            # this parallel task to be cancelled.
-            if any_failed:
-                goal_handle.abort()
-            elif any_done:
-                goal_handle.succeed()
-            else:
-                # Note: according to the logic in the _wait_actions_done this case should never happen - we got result
-                # that at least some task is no more active, but it is neither DONE nor FAILED.
-                self._node.get_logger().warning(
-                    "ParallelExecutor goal_handle is active, but there is no task with done or failed status"
-                )
-                goal_handle.canceled()
+    def _cancel_cb(self, _goal_handle: ServerGoalHandle) -> CancelResponse:
+        return CancelResponse.ACCEPT
 
-        return result
+    def _handle_accepted_cb(self, goal_handle: ServerGoalHandle) -> None:
+        self._latest_goal_handle = goal_handle
+        goal_handle.execute()
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
@@ -251,3 +294,7 @@ class ParallelTaskExecutor(SystemTask):
             msg_interface=PerformInParallel,
             task_server_type=TaskServerType.ACTION,
         )
+
+
+class PreemptedException(Exception):
+    """Exception raised when a parallel task is preempted by a new goal."""

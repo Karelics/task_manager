@@ -50,6 +50,11 @@ class TaskClient(ABC):
     def task_specs(self) -> TaskSpecs:
         """General task-related information."""
 
+    @property
+    @abstractmethod
+    def goal_done(self) -> bool:
+        """Returns True if the task has finished, False otherwise."""
+
     @abstractmethod
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
@@ -91,7 +96,7 @@ class ActionTaskClient(TaskClient):
         self._node = node
         self._task_details = task_details
         self._task_specs = task_specs
-        self.goal_done = Event()
+        self._goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -115,8 +120,12 @@ class ActionTaskClient(TaskClient):
     def task_specs(self) -> TaskSpecs:
         return self._task_specs
 
+    @property
+    def goal_done(self) -> bool:
+        return self._goal_done.is_set()
+
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             callback(self.task_specs, self.task_details)
         self._task_done_callbacks.append(callback)
 
@@ -181,7 +190,7 @@ class ActionTaskClient(TaskClient):
             )
 
         # Wait until _goal_done_cb is called and callbacks have been notified
-        if not self.goal_done.wait(timeout=self._task_specs.cancel_timeout):
+        if not self._goal_done.wait(timeout=self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(
                 f"Task didn't finish within {self._task_specs.cancel_timeout} second timeout after it was cancelled. "
                 f"Is the task cancel implemented correctly?"
@@ -261,7 +270,7 @@ class ActionTaskClient(TaskClient):
 
         for callback in self._task_done_callbacks:
             callback(self.task_specs, self.task_details)
-        self.goal_done.set()
+        self._goal_done.set()
 
     def _fill_in_task_details(self, future: Future) -> None:
         """Fills in the task details based on the future result."""
@@ -322,7 +331,7 @@ class ServiceTaskClient(TaskClient):
         self._task_details = task_details
         self._task_specs = task_specs
         self._service_clients = service_clients
-        self.goal_done = Event()
+        self._goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -342,9 +351,13 @@ class ServiceTaskClient(TaskClient):
     def task_specs(self) -> TaskSpecs:
         return self._task_specs
 
+    @property
+    def goal_done(self) -> bool:
+        return self._goal_done.is_set()
+
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             callback(self.task_specs, self.task_details)
         self._task_done_callbacks.append(callback)
 
@@ -372,13 +385,13 @@ class ServiceTaskClient(TaskClient):
 
         :raises CancelTaskFailedError: If the service doesn't finish in a given timeout.
         """
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             return
         self._node.get_logger().warn(
             f"Currently ongoing service call to {self._task_specs.topic} cannot be cancelled. "
             f"Waiting for {self._task_specs.cancel_timeout} seconds for the task to finish."
         )
-        if not self.goal_done.wait(self._task_specs.cancel_timeout):
+        if not self._goal_done.wait(self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
 
     def request_canceling(self) -> Future:
@@ -408,7 +421,7 @@ class ServiceTaskClient(TaskClient):
         for callback in self._task_done_callbacks:
             callback(self.task_specs, self.task_details)
 
-        self.goal_done.set()
+        self._goal_done.set()
 
 
 def ros_goal_status_to_task_status(ros_goal_status: GoalStatus) -> TaskStatus:
