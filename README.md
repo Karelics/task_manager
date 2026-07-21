@@ -20,6 +20,7 @@ Task Manager is your solution!
 2. [Active tasks](#active-tasks)
 3. [Result tracking](#result-tracking)
 4. [Missions](#missions)
+4. [Parallel Tasks](#parallel-tasks)
 5. [Task Cancelling](#task-cancelling)
 6. [Global STOP-task](#stop)
 7. [Wait task](#wait)
@@ -83,6 +84,14 @@ Mission can be started by calling `system/mission` task.
 <img src="images/mission.jpg" alt="drawing" width="800"/> <br>
 <em>Example UI implementation for displaying a Mission that consists of "Navigation" and "Take Photo" tasks.</em>
 </p>
+
+### Parallel Tasks <a name="parallel-tasks"></a>
+Parallel tasks provide a way to run tasks which depend on each other in a way that if one of the tasks finishes, that will trigger cancellation of all the other related tasks.
+
+Example use cases might be running navigation and video recording as a ParallelTask. When the navigation goal is reached and navigation task finishes, that will cause the video recording task to finish as well.
+
+ParallelTasks can be started by calling `system/perform_in_parallel`
+
 
 ### Task Cancelling <a name="task-cancelling"></a>
 Tasks can be cancelled by calling a `system/cancel_tasks` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
