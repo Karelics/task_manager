@@ -28,7 +28,7 @@ from task_manager_msgs.action import ExecuteTask, PerformInParallel
 from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
-from task_manager.task_client import TaskClient
+from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.parallel_task import ParallelTask
 from task_manager.tasks.system_tasks import SystemTask
@@ -100,7 +100,6 @@ class ParallelTaskExecutor(SystemTask):
 
         if not rclpy.ok():
             self._logger.error("Parallel execution task failed due to rclpy not being ok.")
-            # Have nothing to do here if rclpy fails
             goal_handle.abort()
             return PerformInParallel.Result()
 
@@ -110,12 +109,12 @@ class ParallelTaskExecutor(SystemTask):
     def _gather_and_try_to_run_subtasks(
         self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]
     ) -> List[ParallelTask]:
-        """Creates subtasks one by one and try to start them.
+        """Creates subtasks one by one and tries to start them.
 
         Each subtask that started successfully is put into the list of subtasks.
 
         :param goal_handle: Handle of this execute in parallel goal
-        :param subtasks: Reference to the list of actions. This list is filled by this method by the
+        :param subtasks: Reference to the list of actions. This list is filled in this method, by adding
         all actions that successfully launched
         :return: The same reference to subtasks list
         :raises RuntimeError: If some task fails to start
@@ -183,10 +182,10 @@ class ParallelTaskExecutor(SystemTask):
         any_done, any_failed = self._get_results(subtasks, result)
         any_failed = any_failed or self._set_results_for_unstarted_tasks(goal_handle.request.subtasks, result)
 
-        if goal_handle.is_cancel_requested:
-            goal_handle.canceled()
-        elif any_failed:
+        if any_failed:
             goal_handle.abort()
+        elif goal_handle.is_cancel_requested:
+            goal_handle.canceled()
         elif any_done:
             goal_handle.succeed()
         else:
@@ -204,16 +203,19 @@ class ParallelTaskExecutor(SystemTask):
         :return: True if all tasks have been cancelled, False if timeout has been reached
         """
         for task in subtasks:
-            task.cancel_async()
+            try:
+                task.cancel_async()
+            except CancelTaskFailedError as e:
+                self._logger.error(f"Failed to cancel task '{task.name}': {repr(e)}")
 
         cancel_timeout_start = time.time()
         while rclpy.ok() and (time.time() - cancel_timeout_start < self._timeout):
-            if all(task.has_canceled() for task in subtasks):
+            if all(task.has_finished() for task in subtasks):
                 return True
             time.sleep(0.1)
 
         # Check if some task is still running but is allowed to continue running after cancelation
-        if all(task.has_canceled() or not task.require_finish_on_parallel_cancel() for task in subtasks):
+        if all(task.has_finished() or not task.require_finish_on_parallel_cancel() for task in subtasks):
             return True
         return False
 
@@ -290,6 +292,7 @@ class ParallelTaskExecutor(SystemTask):
             cancel_on_stop=True,
             topic=topic,
             cancel_reported_as_success=False,
+            cancel_timeout=6.0,
             reentrant=True,
             msg_interface=PerformInParallel,
             task_server_type=TaskServerType.ACTION,

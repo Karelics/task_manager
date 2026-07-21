@@ -95,7 +95,6 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
 
         # Publish the feedback
         goal_handle.publish_feedback(feedback_msg)
-        print(f"Publishing feedback: {feedback_msg.sequence}")
 
     # Populate result message
     result.sequence = feedback_msg.sequence

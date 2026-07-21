@@ -275,6 +275,7 @@ class TaskManagerNodeParams:
         self._params.append(Parameter(name="tasks", value=self._tasks))
         self._params.append(Parameter(name="enable_task_servers", value=True))
         self._params.append(Parameter(name="parallel_executor_task.cancel_timeout", value=1.5))
+        self._params.append(Parameter(name="default_cancel_timeout", value=2.0))
         return self._params
 
 

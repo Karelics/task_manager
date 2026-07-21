@@ -28,6 +28,7 @@ import pytest
 from task_manager_msgs.action import PerformInParallel
 
 # Task Manager
+from task_manager.task_client import TaskClient
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor, PreemptedException
 
 # This test file covers the lines which are difficult to cover with integration tests
@@ -44,7 +45,7 @@ def fixture_parallel_task_executor() -> Generator[ParallelTaskExecutor, None, No
         node=Node("test_node"),
         topic="/test/parallel_task_executor",
         prepare_execute_task_result_cb=lambda goal: PerformInParallel.Result(task_id=goal.task_id),
-        start_single_task_cb=lambda goal, response: (MagicMock(), None),
+        start_single_task_cb=lambda goal, response: (MagicMock(spec=TaskClient), ""),
     )
     yield pte
     pte._node.destroy_node()
@@ -52,12 +53,11 @@ def fixture_parallel_task_executor() -> Generator[ParallelTaskExecutor, None, No
 
 
 def test_wait_actions_done_goal_handle_inactive(parallel_task_executor: ParallelTaskExecutor) -> None:
-    """Test that wait_actions_done returns None when the goal_handle is inactive."""
+    """Test that wait_actions_done returns when the goal_handle is inactive."""
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
     goal_handle.is_active = False
-    result = parallel_task_executor._wait_actions_done(goal_handle, [])
-    assert result is None
+    parallel_task_executor._wait_actions_done(goal_handle, [])
 
 
 @patch("task_manager.tasks.parallel_task_executor.rclpy.ok")
