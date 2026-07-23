@@ -1,20 +1,5 @@
-# This is task manager action which allows to perform several tasks in parallel
-# List of actions to be performed in parallel
-
-# We utilize SubtaskGoal's fields as follows:
-# task_name - name of the task in form of expected by the /task_manager/execute_task action
-# task_data - JSON encoded task data
-
-# allow_skipping - This is not used at this point but for future compatibility should be set to False: we may want reuse it in the future for handling e.g. "not mandatory tasks"
-
-# Note 1: tasks in list are launched synchronously one by one as they are ordered in the list, this helps to ensure that the tasks that somehow depend on
-#         other tasks are launched in correct order, but on the other hand this prevents tasks from starting really (as much as ROS an Linux allow) simultaneously
-# Note 2: the tasks in list must be configured as non-blocking
-
-# ToDo: in future revisions we will temporarily change blocking parameter in task_manager params for a given tasks automatically
-task_manager_msgs/SubtaskGoal[] subtasks
+task_manager_msgs/SubtaskGoal[] subtasks     # Tasks to be performed in parallel
 ---
 task_manager_msgs/SubtaskResult[] results
 string message
 ---
-# ToDo: we can provide subtask feedbacks as json string(s), but would it be better to create SubtaskFeedback message for this purpose?

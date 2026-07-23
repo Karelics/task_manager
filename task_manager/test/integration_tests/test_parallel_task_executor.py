@@ -188,6 +188,8 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         subtask_results1 = self.parse_task_results(result1.result.task_result)
         subtask_results2 = self.parse_task_results(result2.result.task_result)
 
+        # Due to limitations in ROS, we cannot get TaskStatus.CANCELED for the main task in this case,
+        # since the "cancellation" of the ParallelTask happens inside the server is not allowed.
         self.assertEqual(result1.result.task_status, TaskStatus.ERROR)
         self.assertEqual(subtask_results1["fib"]["task_status"], TaskStatus.CANCELED)
         self.assertEqual(subtask_results1["wait"]["task_status"], TaskStatus.CANCELED)
@@ -229,6 +231,8 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         subtask_results1 = self.parse_task_results(result1.result.task_result)
         subtask_results2 = self.parse_task_results(result2.result.task_result)
 
+        # Due to limitations in ROS, we cannot get TaskStatus.CANCELED for the main task in this case,
+        # since the "cancellation" of the ParallelTask happens inside the server is not allowed.
         self.assertEqual(result1.result.task_status, TaskStatus.ERROR)
         self.assertEqual(subtask_results1["fib"]["task_status"], TaskStatus.IN_PROGRESS)
         self.assertEqual(subtask_results1["wait"]["task_status"], TaskStatus.CANCELED)

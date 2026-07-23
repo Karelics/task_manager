@@ -87,6 +87,7 @@ class ParallelTaskExecutor(SystemTask):
             return PerformInParallel.Result(message="WARNING: No subtasks provided for parallel execution")
 
         subtasks: List[ParallelTask] = []
+        message = ""
         try:
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)
             self._wait_actions_done(goal_handle, subtasks)
@@ -97,6 +98,7 @@ class ParallelTaskExecutor(SystemTask):
 
         except PreemptedException:
             self._logger.info("Parallel task was preempted by a new goal")
+            message = "Parallel task was preempted by a new goal"
 
         if not rclpy.ok():
             self._logger.error("Parallel execution task failed due to rclpy not being ok.")
@@ -104,6 +106,7 @@ class ParallelTaskExecutor(SystemTask):
             return PerformInParallel.Result()
 
         result = self._cancel_remaining_tasks_and_get_results(goal_handle, subtasks)
+        result.message = message
         return result
 
     def _gather_and_try_to_run_subtasks(
