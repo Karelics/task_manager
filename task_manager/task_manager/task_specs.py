@@ -40,3 +40,4 @@ class TaskSpecs:
     reentrant: bool = False
     service_success_field: str = ""
     cancel_timeout: float = 5.0
+    require_finish_on_parallel_cancel: bool = True

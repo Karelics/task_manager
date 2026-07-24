@@ -37,7 +37,7 @@ from task_manager.task_client import CancelTaskFailedError, ServiceTaskClient, T
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code, protected-access
 # The init is very similar to test_action_task_client, but it is fine in this case
 
 
@@ -85,7 +85,7 @@ class TestServiceTaskClient(unittest.TestCase):
         )
         task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
         self.assertEqual(task_client.task_details.status, TaskStatus.IN_PROGRESS)
-        task_client.goal_done.wait(5)
+        task_client._goal_done.wait(5)
         self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
 
     def test_start_task_non_existing_service_topic(self):
@@ -106,7 +106,7 @@ class TestServiceTaskClient(unittest.TestCase):
             self._node, task_details=self._task_details, task_specs=self._task_specs, service_clients=service_clients
         )
         task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
-        task_client.goal_done.wait(5)
+        task_client._goal_done.wait(5)
         self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
 
         # Destroy the service server and try again
@@ -127,7 +127,7 @@ class TestServiceTaskClient(unittest.TestCase):
             self._node, task_details=self._task_details, task_specs=self._task_specs, service_clients=service_clients
         )
         task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
-        task_client.goal_done.wait(5)
+        task_client._goal_done.wait(5)
         self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
 
     def test_cancel(self):
@@ -160,7 +160,7 @@ class TestServiceTaskClient(unittest.TestCase):
             with self.assertRaises(CancelTaskFailedError):
                 task_client.cancel_task()
 
-            self.assertTrue(task_client.goal_done.wait(1))
+            self.assertTrue(task_client._goal_done.wait(1))
 
         with self.subTest("Task had already finished when the cancel is called"):
             logger_mock = Mock()
@@ -173,7 +173,7 @@ class TestServiceTaskClient(unittest.TestCase):
                 service_clients=service_clients,
             )
             task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
-            self.assertTrue(task_client.goal_done.wait(1))
+            self.assertTrue(task_client._goal_done.wait(1))
             task_client.cancel_task()
             logger_mock.warn.assert_not_called()
 
@@ -206,7 +206,7 @@ class TestServiceTaskClient(unittest.TestCase):
                 service_clients=service_clients,
             )
             task_client.start_task_async(AddTwoInts.Request(a=0, b=0))
-            task_client.goal_done.wait(2)
+            task_client._goal_done.wait(2)
             task_client.register_done_callback(_done_callback)
             self.assertTrue(done_event.wait(1))
 

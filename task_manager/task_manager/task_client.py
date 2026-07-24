@@ -50,6 +50,11 @@ class TaskClient(ABC):
     def task_specs(self) -> TaskSpecs:
         """General task-related information."""
 
+    @property
+    @abstractmethod
+    def goal_done(self) -> bool:
+        """Returns True if the task has finished, False otherwise."""
+
     @abstractmethod
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
@@ -61,6 +66,10 @@ class TaskClient(ABC):
     @abstractmethod
     def cancel_task(self) -> None:
         """Cancel the task synchronously."""
+
+    @abstractmethod
+    def request_canceling(self) -> None:
+        """Request canceling the task asynchronously."""
 
 
 class ActionTaskClient(TaskClient):
@@ -84,7 +93,7 @@ class ActionTaskClient(TaskClient):
         self._node = node
         self._task_details = task_details
         self._task_specs = task_specs
-        self.goal_done = Event()
+        self._goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -108,8 +117,12 @@ class ActionTaskClient(TaskClient):
     def task_specs(self) -> TaskSpecs:
         return self._task_specs
 
+    @property
+    def goal_done(self) -> bool:
+        return self._goal_done.is_set()
+
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             callback(self.task_specs, self.task_details)
         self._task_done_callbacks.append(callback)
 
@@ -156,15 +169,17 @@ class ActionTaskClient(TaskClient):
     def cancel_task(self) -> None:
         """Cancel the task.
 
-        :raises CancelTaskFailedError: If cancel request fails, due to timeout or other
+        This function waits till the task to finish or until the cancel timeout is reached.
+
+        :raises CancelTaskFailedError: If task does not finish (cancel) within the timeout or
+            a bad cancel response code is received.
         """
         if not self._goal_handle:
             raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
 
         # In some rare cases the goal might already be done at this point. If not, cancel it.
         if self._goal_handle.status not in self.DONE_STATES:
-            response = self._request_canceling(self._task_specs.cancel_timeout)
-            self._handle_cancel_response(response)
+            self.request_canceling()
             self._node.get_logger().info(f"Cancelling task of a type '{self.task_specs.task_name}'.")
         else:
             self._node.get_logger().info(
@@ -173,22 +188,32 @@ class ActionTaskClient(TaskClient):
             )
 
         # Wait until _goal_done_cb is called and callbacks have been notified
-        if not self.goal_done.wait(timeout=self._task_specs.cancel_timeout):
+        if not self._goal_done.wait(timeout=self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(
                 f"Task didn't finish within {self._task_specs.cancel_timeout} second timeout after it was cancelled. "
                 f"Is the task cancel implemented correctly?"
             )
 
+    def request_canceling(self) -> None:
+        """Requests canceling of the goal and handles the response from the cancel service call.
+
+        :raises CancelTaskFailedError: If the cancel request fails due to timeout or bad cancel response code.
+        """
+        response = self._request_canceling(timeout=self._task_specs.cancel_timeout)
+        self._handle_cancel_response(response)
+
     def _request_canceling(self, timeout: float) -> CancelGoal.Response:
         """Requests canceling for the goal and returns the cancel response.
 
-        :raises CancelTaskFailedError: If the cancel request timed out
-        :param timeout: Time to wait for cancel request to pass
-        :return: CancelGoal.Response
+        :param timeout: Time the function waits for the cancel response from the action server.
+        :return: Response of the cancel service call.
+        :raises CancelTaskFailedError: If the cancel request fails due to timeout or the goal handle does not exist.
         """
         if not self._goal_handle:
             raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
+
         future = self._goal_handle.cancel_goal_async()
+
         try:
             self._wait_for_future_to_complete(future, timeout=timeout)
         except TimeoutError as e:
@@ -249,7 +274,7 @@ class ActionTaskClient(TaskClient):
 
         for callback in self._task_done_callbacks:
             callback(self.task_specs, self.task_details)
-        self.goal_done.set()
+        self._goal_done.set()
 
     def _fill_in_task_details(self, future: Future) -> None:
         """Fills in the task details based on the future result."""
@@ -310,7 +335,7 @@ class ServiceTaskClient(TaskClient):
         self._task_details = task_details
         self._task_specs = task_specs
         self._service_clients = service_clients
-        self.goal_done = Event()
+        self._goal_done = Event()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -330,9 +355,13 @@ class ServiceTaskClient(TaskClient):
     def task_specs(self) -> TaskSpecs:
         return self._task_specs
 
+    @property
+    def goal_done(self) -> bool:
+        return self._goal_done.is_set()
+
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             callback(self.task_specs, self.task_details)
         self._task_done_callbacks.append(callback)
 
@@ -360,20 +389,29 @@ class ServiceTaskClient(TaskClient):
 
         :raises CancelTaskFailedError: If the service doesn't finish in a given timeout.
         """
-        if self.goal_done.is_set():
+        if self._goal_done.is_set():
             return
         self._node.get_logger().warn(
             f"Currently ongoing service call to {self._task_specs.topic} cannot be cancelled. "
             f"Waiting for {self._task_specs.cancel_timeout} seconds for the task to finish."
         )
-        if not self.goal_done.wait(self._task_specs.cancel_timeout):
+        if not self._goal_done.wait(self._task_specs.cancel_timeout):
             raise CancelTaskFailedError(f"Service call to {self._task_specs.topic} cannot be cancelled.")
+
+    def request_canceling(self) -> None:
+        """Canceling of a service is not a supported feature in ROS 2.
+
+        This function simply returns straight away.
+        """
+        self._node.get_logger().debug(
+            f"Cancel call to service {self._task_specs.topic} is not supported. Ignoring the cancel request."
+        )
 
     def _done_callback(self, future):
         self.task_details.result = future.result()
         self.task_details.status = TaskStatus.DONE
 
-        # If the service response has a "success" -field, use that to determine the final task status
+        # If the service response has a "success" field, use that to determine the final task status
         if self._task_specs.service_success_field != "":
             task_success = getattr(self.task_details.result, self._task_specs.service_success_field)
             if not task_success:
@@ -382,7 +420,7 @@ class ServiceTaskClient(TaskClient):
         for callback in self._task_done_callbacks:
             callback(self.task_specs, self.task_details)
 
-        self.goal_done.set()
+        self._goal_done.set()
 
 
 def ros_goal_status_to_task_status(ros_goal_status: GoalStatus) -> TaskStatus:

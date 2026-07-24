@@ -48,6 +48,7 @@ from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
+from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService, WaitTask
 from task_manager.tasks.task_action_server import TaskActionServer
 from task_manager.tasks.task_service_server import TaskServiceServer
@@ -124,6 +125,9 @@ class TaskManager(Node):
                 task_server_type=detect_task_server_type(msg_interface),
                 service_success_field=service_success_field,
                 cancel_timeout=self.declare_parameter(f"{task}.cancel_timeout", self._default_cancel_timeout).value,
+                require_finish_on_parallel_cancel=self.declare_parameter(
+                    f"{task}.require_finish_on_parallel_cancel", True
+                ).value,
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
@@ -153,6 +157,7 @@ class TaskManager(Node):
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
+        parallel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/perform_in_parallel"
 
         if not self._enable_task_servers:
             # Make services hidden. Actions cannot be hidden in a same way as services are,
@@ -164,11 +169,18 @@ class TaskManager(Node):
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
+        parallel = ParallelTaskExecutor(
+            self,
+            topic=parallel_topic,
+            prepare_execute_task_result_cb=self._prepare_execute_task_result,
+            start_single_task_cb=self._start_single_task,
+        )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
+        self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request
@@ -187,12 +199,37 @@ class TaskManager(Node):
 
     def execute_task(self, request: ExecuteTask.Goal, goal_handle: ServerGoalHandle = None) -> ExecuteTask.Result:
         """Execute a single task."""
+        response = self._prepare_execute_task_result(request)
+        task_client, error_code = self._start_single_task(request, response)
+        if error_code:
+            return response
+
+        try:
+            response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
+        except CancelTaskFailedError as e:
+            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {repr(e)}")
+            response.task_status = TaskStatus.IN_PROGRESS
+            response.error_code = response.ERROR_TASK_CANCEL_FAILED
+
+        return response
+
+    def _prepare_execute_task_result(self, request: ExecuteTask.Goal) -> ExecuteTask.Result:
+        """Prepares the ExecuteTask.Result message with the task_id from the request."""
         if request.task_id == "":
             request.task_id = str(uuid.uuid4())
 
         response = ExecuteTask.Result()
         response.task_id = request.task_id
+        return response
 
+    def _start_single_task(self, request: ExecuteTask.Goal, response: ExecuteTask.Result) -> Tuple[TaskClient, str]:
+        """Starts a single task and handles error reporting.
+
+        :param request: ExecuteTask.Goal message containing the task to be started
+        :param response: ExecuteTask.Result message to be filled with error code if starting the task fails
+        :return: If tasks starts successfully, returns the TaskClient and None.
+          If starting the task fails, returns None and the error code.
+        """
         # Mutex lock required, since we need to be sure that the previous blocking task has
         # truly finished before we try to start another one from another thread.
         with self.mutex:
@@ -215,16 +252,8 @@ class TaskManager(Node):
                     task_result=response.task_result,
                 )
             )
-            return response
 
-        try:
-            response.task_status, response.task_result = self._wait_for_task_finish(task_client, goal_handle)
-        except CancelTaskFailedError as e:
-            self.get_logger().error(f"Failed to cancel a task {request.task_name}: {repr(e)}")
-            response.task_status = TaskStatus.IN_PROGRESS
-            response.error_code = response.ERROR_TASK_CANCEL_FAILED
-
-        return response
+        return task_client, error_code
 
     @staticmethod
     def _cancel_cb(_goal_handle):
@@ -261,7 +290,7 @@ class TaskManager(Node):
 
         :raises CancelTaskFailedError: If the task cancellation fails
         """
-        while rclpy.ok() and not task_client.goal_done.is_set():
+        while rclpy.ok() and not task_client.goal_done:
             if goal_handle and goal_handle.is_cancel_requested:
                 task_client.cancel_task()
                 break

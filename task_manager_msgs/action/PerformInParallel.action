@@ -1,0 +1,5 @@
+task_manager_msgs/SubtaskGoal[] subtasks     # Tasks to be performed in parallel
+---
+task_manager_msgs/SubtaskResult[] results
+string message
+---

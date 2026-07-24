@@ -93,7 +93,7 @@ class SystemTaskTests(TaskManagerTestNode):
 
         self.task_manager_node.task_registrator.cancel_task_timeout = 0.1
         with self.subTest("Task cancel fails"):
-            goal_handle = self.start_fibonacci_action_task("fibonacci_non_cancelable", run_time_secs=1, task_id="111")
+            goal_handle = self.start_fibonacci_action_task("fibonacci_non_cancelable", run_time_secs=3, task_id="111")
             self.wait_for_task_start("111")
 
             stop_response = self.execute_stop_task()

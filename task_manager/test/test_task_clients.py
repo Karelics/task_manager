@@ -97,7 +97,7 @@ class TestActionTaskClient(unittest.TestCase):
     def test_request_canceling_no_goal_handle(self):
         """Tests that we do not crash if goal handle does not exist."""
         task_client = get_action_task_client("task_1")
-        self.assertRaises(CancelTaskFailedError, task_client._request_canceling, 1)
+        self.assertRaises(CancelTaskFailedError, task_client.request_canceling)
 
     @patch("task_manager.task_client.ActionTaskClient._request_canceling")
     def test_cancel_task_no_result_future(self, mock_request_canceling: Mock):

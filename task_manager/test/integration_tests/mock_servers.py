@@ -29,7 +29,13 @@ from example_interfaces.srv import AddTwoInts
 
 
 def create_fib_action_server(node: Node, action_name: str) -> ActionServer:
-    """Action server that execution time depends on the given Fibonacci goal."""
+    """Action server that execution time depends on the given Fibonacci goal.
+
+    Aborts the goal if the order is less than 0.
+
+    If the given order is greater than 50, the action server will take 3 seconds to cancel.
+    This is to simulate a slow canceling action server.
+    """
     return ActionServer(
         node=node,
         action_type=Fibonacci,
@@ -48,6 +54,10 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
     """Implementation of the fibonacci action server."""
     request = goal_handle.request
     result = Fibonacci.Result()
+
+    if request.order < 0:
+        goal_handle.abort()
+        return result
 
     # Append the seeds for the Fibonacci sequence
     feedback_msg = Fibonacci.Feedback()
@@ -70,6 +80,8 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
                 return result
 
             if goal_handle.is_cancel_requested:
+                if request.order > 50:
+                    time.sleep(3)  # Simulate slow canceling action server
                 goal_handle.canceled()
                 return result
             time.sleep(1 / 100)
@@ -83,14 +95,6 @@ def _execute_cb(goal_handle: ServerGoalHandle) -> Fibonacci.Result:
 
         # Publish the feedback
         goal_handle.publish_feedback(feedback_msg)
-
-    if not goal_handle.is_active:
-        goal_handle.abort()
-        return result
-
-    if goal_handle.is_cancel_requested:
-        goal_handle.canceled()
-        return result
 
     # Populate result message
     result.sequence = feedback_msg.sequence
