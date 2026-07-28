@@ -71,6 +71,14 @@ class TaskClient(ABC):
     def request_canceling(self) -> None:
         """Request canceling the task asynchronously."""
 
+    @abstractmethod
+    def pause_task(self) -> None:
+        """Pause the task synchronously."""
+
+    @abstractmethod
+    def resume_task(self) -> None:
+        """Resume a previously paused task synchronously."""
+
 
 class ActionTaskClient(TaskClient):
     """Task client that keeps track of a single Action task."""
@@ -94,6 +102,9 @@ class ActionTaskClient(TaskClient):
         self._task_details = task_details
         self._task_specs = task_specs
         self._goal_done = Event()
+        self._pausing = False
+        self._pause_done = Event()
+        self._last_goal_message: Optional[Any] = None
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -132,6 +143,8 @@ class ActionTaskClient(TaskClient):
         :param goal_message: ROS action goal message
         :raises TaskStartError: If task cannot be started
         """
+        self._last_goal_message = goal_message
+
         if not self._client.wait_for_server(timeout_sec=self.server_wait_timeout):
             self.task_details.status = TaskStatus.ERROR
             raise TaskStartError(f"Action server {self.task_specs.topic} not available.")
@@ -174,6 +187,14 @@ class ActionTaskClient(TaskClient):
         :raises CancelTaskFailedError: If task does not finish (cancel) within the timeout or
             a bad cancel response code is received.
         """
+        if self.task_details.status == TaskStatus.PAUSED:
+            # The underlying goal was already cancelled when the task got paused, and the done-callback
+            # chain never ran for that cancel (pause_task() suppressed it), so finish it now directly.
+            self.task_details.status = TaskStatus.CANCELED
+            self.task_details.result = self.task_specs.msg_interface.Result()
+            self._notify_done_callbacks()
+            return
+
         if not self._goal_handle:
             raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
 
@@ -261,17 +282,77 @@ class ActionTaskClient(TaskClient):
                 )
                 raise CancelTaskFailedError("Couldn't cancel the task!")
 
+    def pause_task(self) -> None:
+        """Pauses the task by cancelling the underlying action goal, keeping the original goal message stored so that
+        resume_task() can restart it later.
+
+        The task's entry stays in ActiveTasks the whole time; no "task done" callbacks are fired.
+
+        :raises PauseTaskFailedError: If the task is already paused/finished, or the cancel fails/times out.
+        """
+        if self.task_details.status == TaskStatus.PAUSED:
+            raise PauseTaskFailedError("Task is already paused.")
+        if self.goal_done:
+            raise PauseTaskFailedError("Cannot pause a task that has already finished.")
+        if not self._goal_handle:
+            raise PauseTaskFailedError("Couldn't pause the task, goal handle does not exist!")
+
+        self._pausing = True
+        self._pause_done = Event()
+        try:
+            self.request_canceling()
+        except CancelTaskFailedError as e:
+            self._pausing = False
+            raise PauseTaskFailedError(f"Failed to pause the task: {e}") from e
+
+        # Wait for _goal_done_cb to set the pause_done event, which indicates that the cancel has been done.
+        if not self._pause_done.wait(timeout=self._task_specs.cancel_timeout):
+            self._pausing = False
+            raise PauseTaskFailedError(
+                f"Task didn't pause within {self._task_specs.cancel_timeout} second timeout after it was cancelled."
+            )
+
+        self._pausing = False
+        self.task_details.status = TaskStatus.PAUSED
+
+    def resume_task(self) -> None:
+        """Resumes a paused task by re-sending the original goal message as a brand-new action goal.
+
+        No-op if the task is not currently paused.
+
+        :raises ResumeTaskFailedError: If (re)starting the goal fails.
+        """
+        if self.task_details.status != TaskStatus.PAUSED:
+            return
+
+        self._goal_handle = None
+        self._result_future = None
+        try:
+            self.start_task_async(self._last_goal_message)
+        except TaskStartError as e:
+            raise ResumeTaskFailedError(f"Failed to resume the task: {e}") from e
+
     def _goal_done_cb(self, future: Future) -> None:
         """Called when the Action Client's goal finishes. Updates the task status and invokes task done callbacks.
 
         :param future: Future object giving the result of the action call.
         """
+        if self._pausing:
+            # This completion is the cancel triggered from pause_task(). The task is not actually
+            # finished, so skip the normal "task done" side effects entirely.
+            self._pause_done.set()
+            return
+
         if future.cancelled():
             self.task_details.status = TaskStatus.CANCELED
             self.task_details.result = self.task_specs.msg_interface.Result()
         else:
             self._fill_in_task_details(future)
 
+        self._notify_done_callbacks()
+
+    def _notify_done_callbacks(self) -> None:
+        """Invokes all registered task-done callbacks and marks the goal as done."""
         for callback in self._task_done_callbacks:
             callback(self.task_specs, self.task_details)
         self._goal_done.set()
@@ -407,6 +488,31 @@ class ServiceTaskClient(TaskClient):
             f"Cancel call to service {self._task_specs.topic} is not supported. Ignoring the cancel request."
         )
 
+    def pause_task(self) -> None:
+        """Services cannot be cancelled mid-flight, so instead of failing immediately, this waits out cancel_timeout for
+        the ongoing call to finish naturally.
+
+        If it finishes within that grace period, the pause is considered successful even though the task ended up
+        DONE rather than PAUSED - a Mission blocked on this subtask can then simply continue on to the next step,
+        the same as if no pause had been requested. Only a call that outlives the grace period is a real failure.
+
+        :raises PauseTaskFailedError: If the task has already finished, or the service call is still running after
+            cancel_timeout.
+        """
+        if self._goal_done.is_set():
+            raise PauseTaskFailedError("Cannot pause a task that has already finished.")
+
+        self._node.get_logger().warn(
+            f"Currently ongoing service call to {self._task_specs.topic} cannot be paused. "
+            f"Waiting for {self._task_specs.cancel_timeout} seconds for the task to finish on its own."
+        )
+        if not self._goal_done.wait(self._task_specs.cancel_timeout):
+            raise PauseTaskFailedError(f"Service call to {self._task_specs.topic} cannot be paused.")
+
+    def resume_task(self) -> None:
+        """No-op, since a service-backed task can never be in a PAUSED state."""
+        return
+
     def _done_callback(self, future):
         self.task_details.result = future.result()
         self.task_details.status = TaskStatus.DONE
@@ -449,3 +555,12 @@ class TaskStartError(Exception):
 
 class CancelTaskFailedError(Exception):
     """Raised when canceling of the task fails, whether due to timeout or other reason."""
+
+
+class PauseTaskFailedError(Exception):
+    """Raised when pausing of the task fails, whether due to timeout, the task already being finished/paused, or the
+    task type not supporting pausing."""
+
+
+class ResumeTaskFailedError(Exception):
+    """Raised when resuming of the task fails, e.g. restarting the underlying goal fails."""

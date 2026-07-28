@@ -22,8 +22,9 @@ Task Manager is your solution!
 4. [Missions](#missions)
 4. [Parallel Tasks](#parallel-tasks)
 5. [Task Cancelling](#task-cancelling)
-6. [Global STOP-task](#stop)
-7. [Wait task](#wait)
+6. [Task Pausing](#task-pausing)
+7. [Global STOP-task](#stop)
+8. [Wait task](#wait)
 
 
 ### Tasks <a name="tasks"></a>
@@ -98,6 +99,11 @@ Tasks can be cancelled by calling a `system/cancel_tasks` task with the Task IDs
 
 Tasks that are implemented using ROS Services cannot be cancelled due to their nature. Trying to cancel such a task will make Task Manager wait for a predefined time for the task to finish and return an `ERROR` status if it doesn't.
 
+### Task Pausing <a name="task-pausing"></a>
+Tasks can be paused and resumed by calling `system/pause_task` / `system/resume_task` with the Task IDs. A paused task gets the status `PAUSED`, stays visible in `/task_manager/active_tasks`, and is excluded from the blocking-task check — so a new blocking task can start while another one sits paused.
+
+Since ROS 2 actions have no native pause mechanism, pausing an action-backed task actually cancels its underlying goal right now, remembering the original goal data. Resuming re-sends that same goal as a brand-new one, i.e. execution restarts from scratch rather than continuing where it left off. Tasks implemented using ROS Services cannot be paused for the same reason they cannot be cancelled — attempting to pause one fails.
+
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
 
@@ -140,6 +146,8 @@ The following tasks are available by default from the Task Manager
 |--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
 | system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
+| system/pause_task  | Pauses the given tasks by Task ID.                                                                            | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
+| system/resume_task | Resumes the given previously paused tasks by Task ID.                                                         | [ResumeTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/ResumeTasks.srv) |
 | system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`.                              | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
 | system/wait | A blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`). | [Wait](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Wait.action)
 

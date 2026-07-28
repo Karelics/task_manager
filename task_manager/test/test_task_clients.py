@@ -14,6 +14,7 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -33,7 +34,7 @@ from example_interfaces.action import Fibonacci
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
-from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, ServiceTaskClient
+from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, PauseTaskFailedError, ServiceTaskClient
 from task_manager.task_details import TaskDetails
 
 # pylint: disable=protected-access
@@ -114,6 +115,41 @@ class TestActionTaskClient(unittest.TestCase):
             with self.subTest(case["case"]):
                 self.assertRaises(CancelTaskFailedError, task_client.cancel_task)
 
+    def test_cancel_task_short_circuits_when_paused(self):
+        """Cancelling an already-paused task must finish it directly, without touching the (gone) goal handle."""
+        task_client = get_action_task_client("task_1")
+        task_client.register_done_callback(self._done_cb)
+        task_client.task_details.status = TaskStatus.PAUSED
+
+        task_client.cancel_task()
+
+        self.assertTrue(self.cb_called)
+        self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
+        self.assertTrue(task_client.goal_done)
+
+    def test_pause_task_no_goal_handle(self):
+        """Tests that we do not crash if goal handle does not exist."""
+        task_client = get_action_task_client("task_1")
+        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def test_pause_task_already_paused(self):
+        """Tests that pausing an already-paused task raises."""
+        task_client = get_action_task_client("task_1")
+        task_client.task_details.status = TaskStatus.PAUSED
+        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def test_pause_task_already_finished(self):
+        """Tests that pausing a finished task raises."""
+        task_client = get_action_task_client("task_1")
+        task_client._goal_done.set()
+        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def test_resume_task_noop_when_not_paused(self):
+        """Resuming a task that isn't paused is a no-op success."""
+        task_client = get_action_task_client("task_1")
+        task_client.resume_task()
+        self.assertIsNone(task_client._goal_handle)
+
 
 class ServiceTaskClientUnittests(unittest.TestCase):
     """Unittests for ServiceTaskClient.
@@ -131,6 +167,34 @@ class ServiceTaskClientUnittests(unittest.TestCase):
         mock_future.result.return_value = Mock(success=False)
         task_client._done_callback(future=mock_future)
         self.assertEqual(task_client.task_details.status, TaskStatus.ERROR)
+
+    def test_pause_task_already_finished_raises(self):
+        """Pausing a service-backed task that has already finished raises straight away."""
+        task_specs = Mock(cancel_timeout=1.0)
+        task_client = ServiceTaskClient(node=Mock(), task_details=Mock(), task_specs=task_specs, service_clients={})
+        task_client._goal_done.set()
+        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def test_pause_task_raises_if_service_does_not_finish_within_grace_period(self):
+        """Pausing waits out cancel_timeout for the service to finish naturally, and only fails if it's still running
+        afterwards."""
+        task_specs = Mock(cancel_timeout=0.05)
+        task_client = ServiceTaskClient(node=Mock(), task_details=Mock(), task_specs=task_specs, service_clients={})
+        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def test_pause_task_succeeds_if_service_finishes_within_grace_period(self):
+        """If the service call finishes naturally while pause_task() is waiting it out, the pause does not raise - it's
+        treated as if it succeeded, letting a Mission continue to its next step."""
+        task_specs = Mock(cancel_timeout=1.0)
+        task_client = ServiceTaskClient(node=Mock(), task_details=Mock(), task_specs=task_specs, service_clients={})
+        threading.Timer(0.05, task_client._goal_done.set).start()
+
+        task_client.pause_task()  # Must not raise
+
+    def test_resume_task_is_noop(self):
+        """Service-backed tasks are never paused, so resuming one is a no-op."""
+        task_client = ServiceTaskClient(node=Mock(), task_details=Mock(), task_specs=Mock(), service_clients={})
+        task_client.resume_task()
 
 
 def get_action_task_client(

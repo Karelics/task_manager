@@ -27,11 +27,11 @@ from rclpy.time import Time
 
 # Task Manager messages
 from task_manager_msgs.action import Wait
-from task_manager_msgs.srv import CancelTasks, StopTasks
+from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
-from task_manager.task_client import CancelTaskFailedError
+from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
 
@@ -126,6 +126,102 @@ class CancelTasksService(SystemTask):
             cancel_reported_as_success=False,
             reentrant=False,
             msg_interface=CancelTasks,
+            task_server_type=TaskServerType.SERVICE,
+            service_success_field="success",
+        )
+
+
+class PauseTasksService(SystemTask):
+    """Pause any task based on the task_id."""
+
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+        self._node = node
+        self._topic = topic
+        self._active_tasks = active_tasks
+
+        self._node.create_service(
+            PauseTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
+        )
+
+    def service_cb(self, request: PauseTasks.Request, response: PauseTasks.Response) -> PauseTasks.Response:
+        """Pauses the currently active tasks by given task_id."""
+        paused = []
+        response.success = True
+        for task_id in request.paused_tasks:
+            try:
+                self._active_tasks.pause_task(task_id)
+            except KeyError:
+                self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
+                response.success = False
+                continue
+            except PauseTaskFailedError as e:
+                self._node.get_logger().error(f"Failed to pause task with ID {task_id}: {e}")
+                response.success = False
+                continue
+
+            paused.append(task_id)
+
+        response.successful_pauses = paused
+        return response
+
+    @staticmethod
+    def get_task_specs(topic: str) -> TaskSpecs:
+        return TaskSpecs(
+            task_name="system/pause_task",
+            blocking=False,
+            cancel_on_stop=False,
+            topic=topic,
+            cancel_reported_as_success=False,
+            reentrant=False,
+            msg_interface=PauseTasks,
+            task_server_type=TaskServerType.SERVICE,
+            service_success_field="success",
+        )
+
+
+class ResumeTasksService(SystemTask):
+    """Resume any paused task based on the task_id."""
+
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+        self._node = node
+        self._topic = topic
+        self._active_tasks = active_tasks
+
+        self._node.create_service(
+            ResumeTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
+        )
+
+    def service_cb(self, request: ResumeTasks.Request, response: ResumeTasks.Response) -> ResumeTasks.Response:
+        """Resumes the currently paused tasks by given task_id."""
+        resumed = []
+        response.success = True
+        for task_id in request.resumed_tasks:
+            try:
+                self._active_tasks.resume_task(task_id)
+            except KeyError:
+                self._node.get_logger().error(f"Tried to resume a task with ID {task_id}, but the task is not active.")
+                response.success = False
+                continue
+            except ResumeTaskFailedError as e:
+                self._node.get_logger().error(f"Failed to resume task with ID {task_id}: {e}")
+                response.success = False
+                continue
+
+            resumed.append(task_id)
+
+        response.successful_resumes = resumed
+        return response
+
+    @staticmethod
+    def get_task_specs(topic: str) -> TaskSpecs:
+        return TaskSpecs(
+            task_name="system/resume_task",
+            blocking=False,
+            cancel_on_stop=False,
+            topic=topic,
+            cancel_reported_as_success=False,
+            reentrant=False,
+            msg_interface=ResumeTasks,
             task_server_type=TaskServerType.SERVICE,
             service_success_field="success",
         )

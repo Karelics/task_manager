@@ -49,7 +49,13 @@ from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsi
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
-from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService, WaitTask
+from task_manager.tasks.system_tasks import (
+    CancelTasksService,
+    PauseTasksService,
+    ResumeTasksService,
+    StopTasksService,
+    WaitTask,
+)
 from task_manager.tasks.task_action_server import TaskActionServer
 from task_manager.tasks.task_service_server import TaskServiceServer
 
@@ -155,6 +161,8 @@ class TaskManager(Node):
         """Create servers for system tasks."""
         stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
+        pause_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/pause_task"
+        resume_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/resume_task"
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
         parallel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/perform_in_parallel"
@@ -164,9 +172,13 @@ class TaskManager(Node):
             # so Missions are always public.
             stop_topic = "_" + stop_topic
             cancel_topic = "_" + cancel_topic
+            pause_topic = "_" + pause_topic
+            resume_topic = "_" + resume_topic
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
+        pause_service = PauseTasksService(self, topic=pause_topic, active_tasks=self.active_tasks)
+        resume_service = ResumeTasksService(self, topic=resume_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
         parallel = ParallelTaskExecutor(
@@ -178,6 +190,8 @@ class TaskManager(Node):
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
+        self.known_tasks["system/pause_task"] = pause_service.get_task_specs(pause_topic)
+        self.known_tasks["system/resume_task"] = resume_service.get_task_specs(resume_topic)
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
         self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)

@@ -1,0 +1,4 @@
+string[] resumed_tasks              # Task IDs of the active tasks to be resumed
+---
+bool success                        # Success if all the resumes pass
+string[] successful_resumes         # List of successfully resumed tasks

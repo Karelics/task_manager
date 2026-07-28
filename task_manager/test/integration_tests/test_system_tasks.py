@@ -73,6 +73,88 @@ class SystemTaskTests(TaskManagerTestNode):
         self.assertEqual(cancel_response.result.task_result, json.dumps({"success": False, "successful_cancels": []}))
         self.assertEqual(goal_response.result.task_status, TaskStatus.DONE)
 
+    def test_pause_and_resume_task_happy_flow(self) -> None:
+        """Test pausing and then resuming a task."""
+        goal_handle = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=3, task_id="111")
+        self.wait_for_task_start("111")
+
+        pause_response = self.execute_pause_task(task_ids=["111"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(pause_response.result.task_result, json.dumps({"success": True, "successful_pauses": ["111"]}))
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        resume_response = self.execute_resume_task(task_ids=["111"])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": ["111"]})
+        )
+        self.wait_for_task_status("111", TaskStatus.IN_PROGRESS)
+
+        # The task restarted from scratch after resuming and should still finish normally
+        self.assertEqual(goal_handle.get_result().result.task_status, TaskStatus.DONE)
+
+    def test_pause_task_non_existing_id(self) -> None:
+        """Test trying to pause a non-existing task."""
+        pause_response = self.execute_pause_task(task_ids=["111"])
+
+        self.assertEqual(pause_response.result.task_status, TaskStatus.ERROR)
+        self.assertEqual(pause_response.result.task_result, json.dumps({"success": False, "successful_pauses": []}))
+
+    def test_pause_service_backed_task_fails(self) -> None:
+        """Test trying to pause a task that is backed by a ROS service, which does not support real cancellation.
+
+        The service call outlives the task's cancel_timeout (1.5s) grace period, so the pause is a real failure.
+        """
+        goal_handle = self.start_add_two_ints_service_task(task_id="222", run_time_secs=3)
+        self.wait_for_task_start("222")
+
+        pause_response = self.execute_pause_task(task_ids=["222"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.ERROR)
+        self.assertEqual(pause_response.result.task_result, json.dumps({"success": False, "successful_pauses": []}))
+
+        # The failed pause must not have touched the still-running task
+        self.assertEqual(self._task_statuses["222"], TaskStatus.IN_PROGRESS)
+
+        # Let the service call finish normally to avoid unnecessary error prints in the end of the test
+        goal_handle.get_result()
+
+    def test_pause_service_backed_task_succeeds_if_it_finishes_within_grace_period(self) -> None:
+        """A service-backed task that finishes on its own within the cancel_timeout grace period is reported as a
+        successful pause, even though it actually ended up DONE rather than PAUSED.
+
+        This lets e.g. a Mission that's blocked waiting on this subtask simply continue on to the next step, as if no
+        pause had been requested.
+        """
+        goal_handle = self.start_add_two_ints_service_task(task_id="333", run_time_secs=1)
+        self.wait_for_task_start("333")
+
+        pause_response = self.execute_pause_task(task_ids=["333"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(pause_response.result.task_result, json.dumps({"success": True, "successful_pauses": ["333"]}))
+
+        self.assertEqual(goal_handle.get_result().result.task_status, TaskStatus.DONE)
+
+    def test_pause_blocking_task_allows_new_blocking_task(self) -> None:
+        """A paused blocking task must not block a new blocking task from starting, and must stay untouched by it."""
+        goal_handle_1 = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=3, task_id="111")
+        self.wait_for_task_start("111")
+
+        pause_response = self.execute_pause_task(task_ids=["111"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        goal_handle_2 = self.start_fibonacci_action_task("fibonacci_blocking_2", run_time_secs=1, task_id="222")
+        self.wait_for_task_start("222")
+        self.assertEqual(goal_handle_2.get_result().result.task_status, TaskStatus.DONE)
+
+        # The paused task must not have been cancelled by the new blocking task
+        self.assertEqual(self._task_statuses["111"], TaskStatus.PAUSED)
+
+        # Clean up the still-paused task
+        cancel_response = self.execute_cancel_task(task_ids=["111"])
+        self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(goal_handle_1.get_result().result.task_status, TaskStatus.CANCELED)
+
     def test_stop_task(self) -> None:
         """Test cases for Stop system task."""
         with self.subTest("Task with 'cancel_on_stop' field is cancelled"):
