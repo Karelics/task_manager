@@ -84,6 +84,36 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.RECEIVED)
         self.assertEqual(fibonacci_result.status, GoalStatus.STATUS_SUCCEEDED)
 
+    def test_pause_mission(self):
+        """The currently running subtask should be paused and mission status should change to PAUSED."""
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="fibonacci", task_data='{"order": 5}', task_id="123"),
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 0}', task_id="456"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("123")
+        active_tasks = self.task_manager_node.active_tasks.get_active_tasks()
+
+        mission_id = [
+            task.task_details.task_id for task in active_tasks if task.task_specs.task_name == "system/mission"
+        ][0]
+
+        print(f"Mission ID: {mission_id}")
+        self.execute_pause_task([mission_id])
+
+        self.assertEqual(active_tasks[active_tasks.index(mission_id)].task_details.status, TaskStatus.PAUSED)
+        self.assertEqual(active_tasks[active_tasks.index("123")].task_details.status, TaskStatus.PAUSED)
+        self.assertEqual(active_tasks[active_tasks.index("456")].task_details.status, TaskStatus.RECEIVED)
+
 
 if __name__ == "__main__":
     unittest.main()
