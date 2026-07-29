@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 import time
 from abc import ABC, abstractmethod
+from typing import Optional
 
 # ROS
 import rclpy
@@ -27,12 +28,64 @@ from rclpy.time import Time
 
 # Task Manager messages
 from task_manager_msgs.action import Wait
+from task_manager_msgs.msg import TaskStatus
 from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
-from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
+from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
+from task_manager.tasks.mission import Mission
+
+
+def _mission_current_subtask_id(task_client: TaskClient, mission: Mission) -> Optional[str]:
+    """If the given task_client is a Mission with a currently tracked subtask, returns that subtask's task_id."""
+    if task_client.task_specs.task_name != "system/mission":
+        return None
+    goal_id = getattr(task_client, "goal_id", None)  # Mission is always action-backed, ActionTaskClient has this
+    if goal_id is None:
+        return None
+    return mission.get_current_subtask_id(bytes(goal_id.uuid))
+
+
+def _resolve_leaf_task_id(task_id: str, active_tasks: ActiveTasks, mission: Mission) -> str:
+    """Follows a chain of Mission redirects down to the leaf task that should actually be paused/resumed.
+
+    Missions can be nested (a mission's current subtask can itself be a mission), so this keeps resolving until
+    it reaches a non-mission task, or a mission with no subtask tracked yet (e.g. pausing it right as it starts,
+    before it has recorded its first subtask) - in which case the mission itself is returned as-is.
+
+    :raises KeyError: if task_id (or one it resolves through) is not an active task.
+    """
+    seen = set()
+    current = task_id
+    while current not in seen:
+        seen.add(current)
+        subtask_id = _mission_current_subtask_id(active_tasks.get_task_client(current), mission)
+        if subtask_id is None:
+            return current
+        current = subtask_id
+    return current  # Cycle guard - shouldn't happen, but avoids ever looping forever on corrupt tracking data.
+
+
+def _mirror_owning_mission_status(
+    target_task_id: str, status: TaskStatus, active_tasks: ActiveTasks, mission: Mission
+) -> None:
+    """Reflects `status` onto every active Mission (at any nesting depth) whose currently tracked subtask chain resolves
+    down to target_task_id.
+
+    Lets pausing/resuming a subtask - whether directly by its own task_id, or indirectly through its owning
+    Mission's task_id - keep the Mission's own displayed status in sync either way.
+    """
+    for candidate in active_tasks.get_active_tasks_by_name("system/mission"):
+        if candidate.task_details.task_id == target_task_id:
+            continue
+        try:
+            resolved = _resolve_leaf_task_id(candidate.task_details.task_id, active_tasks, mission)
+        except KeyError:
+            continue
+        if resolved == target_task_id:
+            candidate.task_details.status = status
 
 
 class SystemTask(ABC):  # pylint: disable=too-few-public-methods
@@ -132,12 +185,19 @@ class CancelTasksService(SystemTask):
 
 
 class PauseTasksService(SystemTask):
-    """Pause any task based on the task_id."""
+    """Pause any task based on the task_id.
 
-    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+    Pausing a Mission by its own task_id is redirected to whichever subtask is currently running under it, and the
+    Mission's own status is reflected as PAUSED too - but only if the subtask actually ended up PAUSED. A
+    service-backed subtask that finishes on its own within its cancel_timeout grace period is left to complete
+    normally, and the Mission simply continues to its next subtask.
+    """
+
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks, mission: Mission) -> None:
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
+        self._mission = mission
 
         self._node.create_service(
             PauseTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -149,7 +209,9 @@ class PauseTasksService(SystemTask):
         response.success = True
         for task_id in request.paused_tasks:
             try:
-                self._active_tasks.pause_task(task_id)
+                target_task_id = _resolve_leaf_task_id(task_id, self._active_tasks, self._mission)
+                target_task_client = self._active_tasks.get_task_client(target_task_id)
+                self._active_tasks.pause_task(target_task_id, publish=False)
             except KeyError:
                 self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
                 response.success = False
@@ -159,6 +221,12 @@ class PauseTasksService(SystemTask):
                 response.success = False
                 continue
 
+            # Only reflect PAUSED onto the owning Mission(s) if the target genuinely ended up paused - a
+            # service-backed task that finished naturally within its cancel_timeout grace period ends up DONE
+            # instead, and the Mission should just be left to continue to its next subtask.
+            if target_task_client.task_details.status == TaskStatus.PAUSED:
+                _mirror_owning_mission_status(target_task_id, TaskStatus.PAUSED, self._active_tasks, self._mission)
+            self._active_tasks.publish_active_tasks()
             paused.append(task_id)
 
         response.successful_pauses = paused
@@ -180,12 +248,17 @@ class PauseTasksService(SystemTask):
 
 
 class ResumeTasksService(SystemTask):
-    """Resume any paused task based on the task_id."""
+    """Resume any paused task based on the task_id.
 
-    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+    Resuming a Mission by its own task_id is redirected to whichever subtask was previously paused under it, and the
+    Mission's own status is reflected back to IN_PROGRESS too.
+    """
+
+    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks, mission: Mission) -> None:
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
+        self._mission = mission
 
         self._node.create_service(
             ResumeTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -197,7 +270,9 @@ class ResumeTasksService(SystemTask):
         response.success = True
         for task_id in request.resumed_tasks:
             try:
-                self._active_tasks.resume_task(task_id)
+                target_task_id = _resolve_leaf_task_id(task_id, self._active_tasks, self._mission)
+                target_task_client = self._active_tasks.get_task_client(target_task_id)
+                self._active_tasks.resume_task(target_task_id, publish=False)
             except KeyError:
                 self._node.get_logger().error(f"Tried to resume a task with ID {task_id}, but the task is not active.")
                 response.success = False
@@ -207,6 +282,11 @@ class ResumeTasksService(SystemTask):
                 response.success = False
                 continue
 
+            # Only reflect IN_PROGRESS onto the owning Mission(s) if the target genuinely resumed - resuming a
+            # service-backed task (which can never really be PAUSED) is a no-op and leaves its status untouched.
+            if target_task_client.task_details.status == TaskStatus.IN_PROGRESS:
+                _mirror_owning_mission_status(target_task_id, TaskStatus.IN_PROGRESS, self._active_tasks, self._mission)
+            self._active_tasks.publish_active_tasks()
             resumed.append(task_id)
 
         response.successful_resumes = resumed

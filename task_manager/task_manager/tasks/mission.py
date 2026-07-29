@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import uuid
-from typing import Callable
+from typing import Callable, Dict, Optional
 
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
@@ -46,6 +46,11 @@ class Mission:
         :param execute_task_cb: Callback to execute a single task
         """
         self.execute_task_cb = execute_task_cb
+        # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask. Keyed
+        # by goal_id (shared by the client and server side of the same action call) rather than the Task Manager's
+        # own task_id, since Mission has no wire-level knowledge of the latter. Supports multiple concurrent
+        # missions, should that ever become possible.
+        self._current_subtask_ids: Dict[bytes, str] = {}
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -54,6 +59,11 @@ class Mission:
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
         )
+
+    def get_current_subtask_id(self, goal_id: bytes) -> Optional[str]:
+        """Returns the task_id of the subtask currently running under the mission invocation identified by goal_id, or
+        None if that mission isn't running (or isn't known)."""
+        return self._current_subtask_ids.get(goal_id)
 
     def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
         """Execution callback of the Mission Action Server, that executes subtasks one by one."""
@@ -72,31 +82,36 @@ class Mission:
                 )
             )
 
-        for subtask, mission_result in zip(request.subtasks, result.mission_results):
-            goal = ExecuteTask.Goal(
-                task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
-            )
-            subtask_result = self.execute_task_cb(goal, goal_handle)
-            mission_result.task_status = subtask_result.task_status
-            mission_result.skipped = False
+        goal_id = bytes(goal_handle.goal_id.uuid)
+        try:
+            for subtask, mission_result in zip(request.subtasks, result.mission_results):
+                self._current_subtask_ids[goal_id] = subtask.task_id
+                goal = ExecuteTask.Goal(
+                    task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
+                )
+                subtask_result = self.execute_task_cb(goal, goal_handle)
+                mission_result.task_status = subtask_result.task_status
+                mission_result.skipped = False
 
-            if subtask_result.task_status != TaskStatus.DONE:
-                if subtask.allow_skipping and not goal_handle.is_cancel_requested:
-                    mission_result.skipped = True
-                    continue
+                if subtask_result.task_status != TaskStatus.DONE:
+                    if subtask.allow_skipping and not goal_handle.is_cancel_requested:
+                        mission_result.skipped = True
+                        continue
 
-                # If the subtask has been cancelled together with the mission, we cancel the mission
-                # If the subtask has been cancelled/failed/indefinitely in progress, we abort the mission
-                # If the mission has been cancelled but the subtask is failed/indefinitely in progress,
-                # we abort the mission
-                if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                else:
-                    goal_handle.abort()
-                return result
+                    # If the subtask has been cancelled together with the mission, we cancel the mission
+                    # If the subtask has been cancelled/failed/indefinitely in progress, we abort the mission
+                    # If the mission has been cancelled but the subtask is failed/indefinitely in progress,
+                    # we abort the mission
+                    if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                    else:
+                        goal_handle.abort()
+                    return result
 
-        goal_handle.succeed()
-        return result
+            goal_handle.succeed()
+            return result
+        finally:
+            self._current_subtask_ids.pop(goal_id, None)
 
     @staticmethod
     def get_task_specs(mission_topic) -> TaskSpecs:
@@ -107,7 +122,7 @@ class Mission:
             cancel_on_stop=True,
             topic=mission_topic,
             cancel_reported_as_success=False,
-            reentrant=False,
+            reentrant=True,
             msg_interface=MissionAction,
             task_server_type=TaskServerType.ACTION,
         )

@@ -177,9 +177,9 @@ class TaskManager(Node):
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
-        pause_service = PauseTasksService(self, topic=pause_topic, active_tasks=self.active_tasks)
-        resume_service = ResumeTasksService(self, topic=resume_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
+        pause_service = PauseTasksService(self, topic=pause_topic, active_tasks=self.active_tasks, mission=mission)
+        resume_service = ResumeTasksService(self, topic=resume_topic, active_tasks=self.active_tasks, mission=mission)
         wait = WaitTask(self, topic=wait_topic)
         parallel = ParallelTaskExecutor(
             self,
@@ -283,7 +283,9 @@ class TaskManager(Node):
             )
             return None, ExecuteTask.Result().ERROR_UNKNOWN_TASK
 
-        self.get_logger().info(f"Got a request from '{request.source}' to start '{request.task_name}' task.")
+        self.get_logger().info(
+            f"Got a request from '{request.source}' to start '{request.task_name}' task. [{request.task_id}]"
+        )
         try:
             task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task_name])
         except DuplicateTaskIdException as error_msg:

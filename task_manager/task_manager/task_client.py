@@ -132,6 +132,15 @@ class ActionTaskClient(TaskClient):
     def goal_done(self) -> bool:
         return self._goal_done.is_set()
 
+    @property
+    def goal_id(self) -> Optional[Any]:
+        """ROS action goal_id (unique_identifier_msgs/UUID) of the currently active goal, shared by the client and
+        server side of the same action call.
+
+        None if the task hasn't started yet.
+        """
+        return self._goal_handle.goal_id if self._goal_handle else None
+
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         if self._goal_done.is_set():
             callback(self.task_specs, self.task_details)
