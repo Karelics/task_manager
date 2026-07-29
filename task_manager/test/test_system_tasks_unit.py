@@ -73,10 +73,12 @@ class ResolveDownTests(unittest.TestCase):
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_leaf_resolves_to_itself(self):
+        """A plain task that isn't a composite resolves to itself."""
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.assertEqual(_resolve_down("leaf1", self.active_tasks, self.composites), ["leaf1"])
 
     def test_mission_resolves_to_its_active_child(self):
+        """A Mission resolves down to whichever of its subtasks is currently active."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
@@ -84,6 +86,7 @@ class ResolveDownTests(unittest.TestCase):
         self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
 
     def test_parallel_resolves_to_all_its_active_children(self):
+        """A ParallelTaskExecutor resolves down to all of its currently active members."""
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.active_tasks.add(make_task_client("leaf2", "some_task"))
@@ -116,6 +119,7 @@ class ResolveDownTests(unittest.TestCase):
         self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["m1"])
 
     def test_unknown_task_id_raises_key_error(self):
+        """If the task_id isn't in ActiveTasks, resolution fails with KeyError."""
         self.assertRaises(KeyError, _resolve_down, "unknown", self.active_tasks, self.composites)
 
 
@@ -129,6 +133,7 @@ class FindEnclosingCompositeTests(unittest.TestCase):
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_finds_owning_mission(self):
+        """A task resolves to its owning Mission."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
@@ -136,6 +141,7 @@ class FindEnclosingCompositeTests(unittest.TestCase):
         self.assertEqual(_find_enclosing_composite("leaf1", self.active_tasks, self.composites), "m1")
 
     def test_finds_owning_parallel_task_for_any_of_its_members(self):
+        """Any member of a ParallelTaskExecutor resolves to that ParallelTaskExecutor."""
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.active_tasks.add(make_task_client("leaf2", "some_task"))
@@ -147,6 +153,7 @@ class FindEnclosingCompositeTests(unittest.TestCase):
         self.assertEqual(_find_enclosing_composite("leaf2", self.active_tasks, self.composites), "p1")
 
     def test_returns_none_for_untracked_task(self):
+        """A task that isn't a member of any composite returns None."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.mission.get_active_children.return_value = []
@@ -171,6 +178,8 @@ class ResolveTargetTaskIdsTests(unittest.TestCase):
         )
 
     def test_targeting_the_group_owner_directly_expands_to_all_members(self):
+        """Pausing/resuming the ParallelTaskExecutor itself must affect every member, not just the composite's own
+        task_id."""
         self.assertEqual(_resolve_target_task_ids("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
     def test_targeting_one_member_expands_to_the_whole_group(self):
@@ -179,6 +188,7 @@ class ResolveTargetTaskIdsTests(unittest.TestCase):
         self.assertEqual(_resolve_target_task_ids("leaf2", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
     def test_plain_unrelated_leaf_resolves_to_itself(self):
+        """A task that isn't part of any composite resolves to itself."""
         self.active_tasks.add(make_task_client("other", "some_task"))
         self.assertEqual(_resolve_target_task_ids("other", self.active_tasks, self.composites), ["other"])
 
@@ -193,6 +203,7 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_marks_composite_paused_when_all_active_children_are_paused(self):
+        """If all of a composite's active children are PAUSED, the composite itself must be marked PAUSED too."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
@@ -202,6 +213,8 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
     def test_leaves_composite_in_progress_when_a_child_is_still_running(self):
+        """If any of a composite's active children are still running, the composite itself must be marked
+        IN_PROGRESS."""
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
         self.active_tasks.add(make_task_client("leaf2", "some_task", status=TaskStatus.IN_PROGRESS))
@@ -214,6 +227,8 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("p1").task_details.status, TaskStatus.IN_PROGRESS)
 
     def test_flips_composite_back_to_in_progress_once_no_child_is_paused_anymore(self):
+        """If none of a composite's active children are PAUSED anymore, the composite itself must be marked
+        IN_PROGRESS."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1, status=TaskStatus.PAUSED))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
@@ -242,6 +257,7 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
     def test_leaves_unrelated_composites_untouched(self):
+        """Composites that have no active children should remain unaffected."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])

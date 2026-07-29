@@ -333,7 +333,7 @@ class TaskManager(Node):
         msg = ActiveTaskArray(active_tasks=task_messages)
         self._active_tasks_pub.publish(msg)
 
-    def _task_done_cb(self, task_specs: TaskSpecs, task_details: TaskDetails):
+    def _task_done_cb(self, task_specs: TaskSpecs, task_details: TaskDetails) -> None:
         result_msg = TaskDoneResult(
             task_id=task_details.task_id,
             task_name=task_specs.task_name,

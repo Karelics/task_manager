@@ -37,7 +37,7 @@ from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
 
-class ActiveChildrenTracker(Protocol):
+class ActiveChildrenTracker(Protocol):  # pylint: disable=too-few-public-methods
     """Structural interface for composite tasks (Mission, ParallelTaskExecutor, ...) whose pause/resume must redirect to
     whichever of their own children are currently active.
 
@@ -145,7 +145,7 @@ def _pause_or_resume_group(
     active_tasks: ActiveTasks,
     composites: Dict[str, "ActiveChildrenTracker"],
     from_statuses: Tuple[TaskStatus, ...],
-    try_member: Callable[[str], bool],
+    func_to_call: Callable[[str], bool],
 ) -> bool:
     """Resolves task_id (Mission/parallel-aware) to its full set of target leaves, and applies try_member to.
 
@@ -153,6 +153,14 @@ def _pause_or_resume_group(
     others from being attempted, and members that already succeeded are never rolled back. Re-syncs every
     composite's own status from its children afterward.
 
+    :param task_id: the task_id given in the pause/resume request.
+    :param active_tasks: the ActiveTasks instance to operate on.
+    :param composites: the dict of composite task names to their ActiveChildrenTracker instances.
+    :param from_statuses: the set of statuses that a member must be in to be attempted for transition.
+        Members already in the target state are skipped, and members that have finished on their own are
+        also skipped (not a failure).
+    :param func_to_call: the function to call for each member that is in from_statuses. Should return True
+        if the transition succeeded, False if it failed.
     :raises KeyError: if task_id is not an active task.
     :return: True if any member failed to transition.
     """
@@ -162,7 +170,7 @@ def _pause_or_resume_group(
     for member_id in target_ids:
         if active_tasks.get_task_client(member_id).task_details.status not in from_statuses:
             continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
-        if not try_member(member_id):
+        if not func_to_call(member_id):
             any_failure = True
 
     _sync_composite_statuses(active_tasks, composites)
@@ -466,10 +474,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
 
         while rclpy.ok() and self._node.get_clock().now() < end_time:
             if goal_handle.is_cancel_requested:
-                if duration_in_seconds <= 0.0:
-                    goal_handle.succeed()
-                else:
-                    goal_handle.canceled()
+                goal_handle.canceled()
                 return Wait.Result()
 
             if not goal_handle.is_active:
@@ -499,7 +504,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             blocking=True,
             cancel_on_stop=True,
             topic=topic,
-            cancel_reported_as_success=False,
+            cancel_reported_as_success=True,
             reentrant=False,
             msg_interface=Wait,
             task_server_type=TaskServerType.ACTION,
