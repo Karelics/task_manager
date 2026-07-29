@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import uuid
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List
 
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
@@ -60,10 +60,14 @@ class Mission:
             callback_group=ReentrantCallbackGroup(),
         )
 
-    def get_current_subtask_id(self, goal_id: bytes) -> Optional[str]:
-        """Returns the task_id of the subtask currently running under the mission invocation identified by goal_id, or
-        None if that mission isn't running (or isn't known)."""
-        return self._current_subtask_ids.get(goal_id)
+    def get_active_children(self, goal_id: bytes) -> List[str]:
+        """Satisfies the generic `ActiveChildrenTracker` protocol used by pause/resume (system_tasks.py): a Mission's
+        "active children" is just its single currently-running subtask, if any.
+
+        Empty list if that mission invocation isn't running (or isn't known).
+        """
+        current = self._current_subtask_ids.get(goal_id)
+        return [current] if current is not None else []
 
     def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
         """Execution callback of the Mission Action Server, that executes subtasks one by one."""

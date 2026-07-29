@@ -178,14 +178,19 @@ class TaskManager(Node):
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
         cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
-        pause_service = PauseTasksService(self, topic=pause_topic, active_tasks=self.active_tasks, mission=mission)
-        resume_service = ResumeTasksService(self, topic=resume_topic, active_tasks=self.active_tasks, mission=mission)
         wait = WaitTask(self, topic=wait_topic)
         parallel = ParallelTaskExecutor(
             self,
             topic=parallel_topic,
             prepare_execute_task_result_cb=self._prepare_execute_task_result,
             start_single_task_cb=self._start_single_task,
+        )
+        composites = {"system/mission": mission, "system/perform_in_parallel": parallel}
+        pause_service = PauseTasksService(
+            self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites
+        )
+        resume_service = ResumeTasksService(
+            self, topic=resume_topic, active_tasks=self.active_tasks, composites=composites
         )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)

@@ -24,7 +24,7 @@ from task_manager_test_utils import TaskManagerTestNode
 from action_msgs.msg import GoalStatus
 
 # Task Manager messages
-from task_manager_msgs.action import ExecuteTask, Mission
+from task_manager_msgs.action import ExecuteTask, Mission, PerformInParallel
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 
@@ -165,6 +165,67 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_response.status, GoalStatus.STATUS_SUCCEEDED)
         self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.DONE)
         self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
+
+    def test_pause_subtask_of_parallel_task_running_inside_mission(self):
+        """Pausing one of the two subtasks of a ParallelTaskExecutor that itself runs as a Mission subtask pauses every
+        member of that parallel group, and the status sync now bridges all the way up through the nesting:
+
+        the parallel task's own status, and the Mission's own status above it, both end up PAUSED too.
+        """
+        parallel_goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib1", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="fib2", task_name="fibonacci_2", task_data='{"order": 10}'),
+            ]
+        )
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="parallel",
+                    task_name="system/perform_in_parallel",
+                    task_data=json.dumps(extract_values(parallel_goal)),
+                )
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("fib1")
+        self.wait_for_task_start("fib2")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        pause_response = self.execute_pause_task(["fib1"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            pause_response.result.task_result, json.dumps({"success": True, "successful_pauses": ["fib1"]})
+        )
+
+        self.wait_for_task_status("fib1", TaskStatus.PAUSED)
+        self.wait_for_task_status("fib2", TaskStatus.PAUSED)
+        self.assertEqual(active_tasks_by_id["parallel"].task_details.status, TaskStatus.PAUSED)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+
+        # Resuming the Mission by its own task_id resumes the whole nested group underneath it
+        resume_response = self.execute_resume_task([mission_id])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+
+        self.wait_for_task_status("fib1", TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status("fib2", TaskStatus.IN_PROGRESS)
+        self.assertEqual(active_tasks_by_id["parallel"].task_details.status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+
+        # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
+        self.execute_cancel_task([mission_id])
 
 
 if __name__ == "__main__":

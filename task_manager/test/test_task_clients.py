@@ -127,6 +127,21 @@ class TestActionTaskClient(unittest.TestCase):
         self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
         self.assertTrue(task_client.goal_done)
 
+    def test_request_canceling_short_circuits_when_paused(self):
+        """Request_canceling() alone (without going through cancel_task()) must also finish an already-paused task.
+
+        directly - callers like ParallelTask.cancel_async() rely on this to never special-case PAUSED themselves.
+        """
+        task_client = get_action_task_client("task_1")
+        task_client.register_done_callback(self._done_cb)
+        task_client.task_details.status = TaskStatus.PAUSED
+
+        task_client.request_canceling()
+
+        self.assertTrue(self.cb_called)
+        self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
+        self.assertTrue(task_client.goal_done)
+
     def test_pause_task_no_goal_handle(self):
         """Tests that we do not crash if goal handle does not exist."""
         task_client = get_action_task_client("task_1")

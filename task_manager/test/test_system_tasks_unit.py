@@ -26,9 +26,18 @@ from task_manager.task_client import ActionTaskClient, TaskClient
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
 from task_manager.tasks.mission import Mission
-from task_manager.tasks.system_tasks import _mirror_owning_mission_status, _resolve_leaf_task_id
+from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
+from task_manager.tasks.system_tasks import (
+    _find_enclosing_composite,
+    _resolve_down,
+    _resolve_target_task_ids,
+    _sync_composite_statuses,
+)
 
 # pylint: disable=protected-access
+
+MISSION = "system/mission"
+PARALLEL = "system/perform_in_parallel"
 
 
 def make_task_client(task_id: str, task_name: str, status: str = TaskStatus.IN_PROGRESS, spec=TaskClient):
@@ -46,83 +55,198 @@ def make_task_client(task_id: str, task_name: str, status: str = TaskStatus.IN_P
     return client
 
 
-def make_mission_client(task_id: str, goal_id_byte: int):
-    """Builds a Mock ActionTaskClient standing in for a Mission's own task_client, with a fake goal_id."""
-    client = make_task_client(task_id, task_name="system/mission", spec=ActionTaskClient)
+def make_composite_client(task_id: str, task_name: str, goal_id_byte: int, status: str = TaskStatus.IN_PROGRESS):
+    """Builds a Mock ActionTaskClient standing in for a composite task's (Mission/ParallelTaskExecutor) own task_client,
+    with a fake goal_id."""
+    client = make_task_client(task_id, task_name=task_name, status=status, spec=ActionTaskClient)
     client.goal_id = Mock(uuid=[goal_id_byte] * 16)
     return client
 
 
-class ResolveLeafTaskIdTests(unittest.TestCase):
-    """Unit tests for system_tasks._resolve_leaf_task_id."""
+class ResolveDownTests(unittest.TestCase):
+    """Unit tests for system_tasks._resolve_down."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
         self.mission = Mock(spec=Mission)
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
-    def test_non_mission_task_resolves_to_itself(self):
+    def test_leaf_resolves_to_itself(self):
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        self.assertEqual(_resolve_leaf_task_id("leaf1", self.active_tasks, self.mission), "leaf1")
+        self.assertEqual(_resolve_down("leaf1", self.active_tasks, self.composites), ["leaf1"])
 
-    def test_mission_redirects_to_its_current_subtask(self):
-        self.active_tasks.add(make_mission_client("m1", goal_id_byte=1))
+    def test_mission_resolves_to_its_active_child(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        self.mission.get_current_subtask_id.side_effect = lambda goal_id: {bytes([1] * 16): "leaf1"}.get(goal_id)
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
 
-        self.assertEqual(_resolve_leaf_task_id("m1", self.active_tasks, self.mission), "leaf1")
+        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
 
-    def test_recurses_through_nested_missions(self):
-        """A mission's current subtask can itself be a mission - resolution must follow the whole chain down to
-        the real leaf task, not stop after one hop."""
-        self.active_tasks.add(make_mission_client("m1", goal_id_byte=1))
-        self.active_tasks.add(make_mission_client("m2", goal_id_byte=2))
+    def test_parallel_resolves_to_all_its_active_children(self):
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        subtask_by_goal_id = {bytes([1] * 16): "m2", bytes([2] * 16): "leaf1"}
-        self.mission.get_current_subtask_id.side_effect = lambda goal_id: subtask_by_goal_id.get(goal_id)
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
 
-        self.assertEqual(_resolve_leaf_task_id("m1", self.active_tasks, self.mission), "leaf1")
+        self.assertEqual(_resolve_down("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
-    def test_mission_with_no_tracked_subtask_resolves_to_itself(self):
-        """If the mission hasn't recorded its first subtask yet (e.g. paused right as it starts), resolution falls back
-        to the mission's own task_id."""
-        self.active_tasks.add(make_mission_client("m1", goal_id_byte=1))
-        self.mission.get_current_subtask_id.return_value = None
+    def test_recurses_through_nested_composites_of_mixed_types(self):
+        """A Mission's active child can itself be a parallel task (and vice versa) - resolution must follow the
+        whole chain down to the real leaves, not stop after one hop."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["p1"]}.get(goal_id, [])
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([2] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
 
-        self.assertEqual(_resolve_leaf_task_id("m1", self.active_tasks, self.mission), "m1")
+        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+
+    def test_composite_with_no_active_children_resolves_to_itself(self):
+        """If the composite hasn't recorded any active children yet (e.g. paused right as it starts), resolution falls
+        back to the composite's own task_id."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.mission.get_active_children.return_value = []
+
+        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["m1"])
 
     def test_unknown_task_id_raises_key_error(self):
-        self.assertRaises(KeyError, _resolve_leaf_task_id, "unknown", self.active_tasks, self.mission)
+        self.assertRaises(KeyError, _resolve_down, "unknown", self.active_tasks, self.composites)
 
 
-class MirrorOwningMissionStatusTests(unittest.TestCase):
-    """Unit tests for system_tasks._mirror_owning_mission_status."""
+class FindEnclosingCompositeTests(unittest.TestCase):
+    """Unit tests for system_tasks._find_enclosing_composite."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
         self.mission = Mock(spec=Mission)
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
-    def test_mirrors_status_onto_direct_and_nested_owning_missions(self):
-        """Pausing/resuming a leaf task must be reflected on every mission (any nesting depth) currently tracking it as
-        their active subtask, regardless of whether the request targeted the leaf or an owning mission."""
-        self.active_tasks.add(make_mission_client("m1", goal_id_byte=1))
-        self.active_tasks.add(make_mission_client("m2", goal_id_byte=2))
+    def test_finds_owning_mission(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        subtask_by_goal_id = {bytes([1] * 16): "m2", bytes([2] * 16): "leaf1"}
-        self.mission.get_current_subtask_id.side_effect = lambda goal_id: subtask_by_goal_id.get(goal_id)
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
 
-        _mirror_owning_mission_status("leaf1", TaskStatus.PAUSED, self.active_tasks, self.mission)
+        self.assertEqual(_find_enclosing_composite("leaf1", self.active_tasks, self.composites), "m1")
+
+    def test_finds_owning_parallel_task_for_any_of_its_members(self):
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
+
+        self.assertEqual(_find_enclosing_composite("leaf1", self.active_tasks, self.composites), "p1")
+        self.assertEqual(_find_enclosing_composite("leaf2", self.active_tasks, self.composites), "p1")
+
+    def test_returns_none_for_untracked_task(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.mission.get_active_children.return_value = []
+
+        self.assertIsNone(_find_enclosing_composite("leaf1", self.active_tasks, self.composites))
+
+
+class ResolveTargetTaskIdsTests(unittest.TestCase):
+    """Unit tests for system_tasks._resolve_target_task_ids - the combination of _find_enclosing_composite and
+    _resolve_down that PauseTasksService/ResumeTasksService actually use."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.composites = {PARALLEL: self.parallel}
+
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
+
+    def test_targeting_the_group_owner_directly_expands_to_all_members(self):
+        self.assertEqual(_resolve_target_task_ids("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+
+    def test_targeting_one_member_expands_to_the_whole_group(self):
+        """Pausing/resuming one member of a parallel group must affect every member, not just that one."""
+        self.assertEqual(_resolve_target_task_ids("leaf1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+        self.assertEqual(_resolve_target_task_ids("leaf2", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+
+    def test_plain_unrelated_leaf_resolves_to_itself(self):
+        self.active_tasks.add(make_task_client("other", "some_task"))
+        self.assertEqual(_resolve_target_task_ids("other", self.active_tasks, self.composites), ["other"])
+
+
+class SyncCompositeStatusesTests(unittest.TestCase):
+    """Unit tests for system_tasks._sync_composite_statuses."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.mission = Mock(spec=Mission)
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
+
+    def test_marks_composite_paused_when_all_active_children_are_paused(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
+
+        _sync_composite_statuses(self.active_tasks, self.composites)
 
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
-        self.assertEqual(self.active_tasks.get_task_client("m2").task_details.status, TaskStatus.PAUSED)
 
-    def test_leaves_unrelated_missions_untouched(self):
-        self.active_tasks.add(make_mission_client("m1", goal_id_byte=1))
-        self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        self.active_tasks.add(make_task_client("other_leaf", "some_task"))
-        subtask_by_goal_id = {bytes([1] * 16): "other_leaf"}
-        self.mission.get_current_subtask_id.side_effect = lambda goal_id: subtask_by_goal_id.get(goal_id)
+    def test_leaves_composite_in_progress_when_a_child_is_still_running(self):
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
+        self.active_tasks.add(make_task_client("leaf2", "some_task", status=TaskStatus.IN_PROGRESS))
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
 
-        _mirror_owning_mission_status("leaf1", TaskStatus.PAUSED, self.active_tasks, self.mission)
+        _sync_composite_statuses(self.active_tasks, self.composites)
+
+        self.assertEqual(self.active_tasks.get_task_client("p1").task_details.status, TaskStatus.IN_PROGRESS)
+
+    def test_flips_composite_back_to_in_progress_once_no_child_is_paused_anymore(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1, status=TaskStatus.PAUSED))
+        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
+
+        _sync_composite_statuses(self.active_tasks, self.composites)
+
+        self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.IN_PROGRESS)
+
+    def test_settles_a_nested_chain_in_a_single_call(self):
+        """A Mission whose active child is a parallel task, whose members are all paused, must end up PAUSED.
+
+        itself too - in one call, regardless of internal scan order (multi-pass fixpoint).
+        """
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
+        self.active_tasks.add(make_task_client("leaf2", "some_task", status=TaskStatus.PAUSED))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["p1"]}.get(goal_id, [])
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([2] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
+
+        _sync_composite_statuses(self.active_tasks, self.composites)
+
+        self.assertEqual(self.active_tasks.get_task_client("p1").task_details.status, TaskStatus.PAUSED)
+        self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
+
+    def test_leaves_unrelated_composites_untouched(self):
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
+
+        _sync_composite_statuses(self.active_tasks, self.composites)
 
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.IN_PROGRESS)
 

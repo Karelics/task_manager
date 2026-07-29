@@ -196,12 +196,7 @@ class ActionTaskClient(TaskClient):
         :raises CancelTaskFailedError: If task does not finish (cancel) within the timeout or
             a bad cancel response code is received.
         """
-        if self.task_details.status == TaskStatus.PAUSED:
-            # The underlying goal was already cancelled when the task got paused, and the done-callback
-            # chain never ran for that cancel (pause_task() suppressed it), so finish it now directly.
-            self.task_details.status = TaskStatus.CANCELED
-            self.task_details.result = self.task_specs.msg_interface.Result()
-            self._notify_done_callbacks()
+        if self._finish_if_paused():
             return
 
         if not self._goal_handle:
@@ -227,10 +222,30 @@ class ActionTaskClient(TaskClient):
     def request_canceling(self) -> None:
         """Requests canceling of the goal and handles the response from the cancel service call.
 
+        If the task is currently PAUSED, its goal was already cancelled once when it got paused - this just
+        finishes it locally as CANCELED instead of issuing a new (bogus) cancel request against a dead goal.
+
         :raises CancelTaskFailedError: If the cancel request fails due to timeout or bad cancel response code.
         """
+        if self._finish_if_paused():
+            return
+
         response = self._request_canceling(timeout=self._task_specs.cancel_timeout)
         self._handle_cancel_response(response)
+
+    def _finish_if_paused(self) -> bool:
+        """If the task is currently PAUSED, finishes it as CANCELED and returns True.
+
+        The task's goal was already cancelled once when it got paused, and that cancel's done-callback was
+        suppressed by pause_task() at the time (see `_goal_done_cb`) - so nothing will ever fire it on its own;
+        this is the only place that ever will. Returns False (no-op) if the task isn't paused.
+        """
+        if self.task_details.status != TaskStatus.PAUSED:
+            return False
+        self.task_details.status = TaskStatus.CANCELED
+        self.task_details.result = self.task_specs.msg_interface.Result()
+        self._notify_done_callbacks()
+        return True
 
     def _request_canceling(self, timeout: float) -> CancelGoal.Response:
         """Requests canceling for the goal and returns the cancel response.

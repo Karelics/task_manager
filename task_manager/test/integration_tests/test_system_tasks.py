@@ -93,6 +93,25 @@ class SystemTaskTests(TaskManagerTestNode):
         # The task restarted from scratch after resuming and should still finish normally
         self.assertEqual(goal_handle.get_result().result.task_status, TaskStatus.DONE)
 
+    def test_cancel_paused_task(self) -> None:
+        """Cancelling an already-paused task must finish it directly as CANCELED, without needing to touch its (already-
+        cancelled, dead) underlying goal again."""
+        goal_handle = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=3, task_id="111")
+        self.wait_for_task_start("111")
+
+        pause_response = self.execute_pause_task(task_ids=["111"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        cancel_response = self.execute_cancel_task(task_ids=["111"])
+        self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            cancel_response.result.task_result, json.dumps({"success": True, "successful_cancels": ["111"]})
+        )
+
+        self.assertEqual(goal_handle.get_result().result.task_status, TaskStatus.CANCELED)
+        self.assertEqual(self._task_statuses["111"], TaskStatus.CANCELED)
+
     def test_pause_task_non_existing_id(self) -> None:
         """Test trying to pause a non-existing task."""
         pause_response = self.execute_pause_task(task_ids=["111"])
