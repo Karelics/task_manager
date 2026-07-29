@@ -68,8 +68,11 @@ public entry point (`/task_manager/execute_task` action). Request flow:
 Everything under `tasks/` are the built-in "system tasks", each self-registered in `TaskManager.setup_system_tasks()`
 and each exposing `get_task_specs()` so it's treated like any other declared task:
 - `system_tasks.py` — `StopTasksService` (`system/stop`, cancels everything with `cancel_on_stop=True`),
-  `CancelTasksService` (`system/cancel_task`, cancel-by-id), `WaitTask` (`system/wait`, blocking wait/indefinite-wait
-  task).
+  `CancelTasksService` (`system/cancel_task`, cancel-by-id), `PauseTasksService` / `ResumeTasksService`
+  (`system/pause_task` / `system/resume_task`, pause-by-id/resume-by-id; pausing/resuming a Mission or a
+  `perform_in_parallel` group by its own task_id redirects to whichever of its children are currently active, via
+  the `ActiveChildrenTracker` protocol/`_resolve_down`/`_find_enclosing_composite`/`_sync_composite_statuses`
+  helpers), `WaitTask` (`system/wait`, blocking wait/indefinite-wait task).
 - `mission.py` — `Mission` (`system/mission`), runs a list of subtasks sequentially by re-entering
   `TaskManager.execute_task()` per subtask; aborts/cancels the whole mission on subtask failure unless
   `allow_skipping` is set on that subtask.

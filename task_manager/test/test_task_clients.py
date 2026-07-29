@@ -119,6 +119,9 @@ class TestActionTaskClient(unittest.TestCase):
         """Cancelling an already-paused task must finish it directly, without touching the (gone) goal handle."""
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
+        # `_paused` (not the public status) is the source of truth for "this client's own goal was really
+        # cancelled by pause_task()" - see _finish_if_paused()'s docstring for why.
+        task_client._paused = True
         task_client.task_details.status = TaskStatus.PAUSED
 
         task_client.cancel_task()
@@ -134,6 +137,7 @@ class TestActionTaskClient(unittest.TestCase):
         """
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
+        task_client._paused = True
         task_client.task_details.status = TaskStatus.PAUSED
 
         task_client.request_canceling()
@@ -141,6 +145,26 @@ class TestActionTaskClient(unittest.TestCase):
         self.assertTrue(self.cb_called)
         self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
         self.assertTrue(task_client.goal_done)
+
+    @patch.object(ActionTaskClient, "request_canceling")
+    def test_cancel_task_does_not_short_circuit_a_composite_forced_into_paused_status(self, mock_request_canceling):
+        """A composite task's (Mission/ParallelTaskExecutor) own status can be forced to PAUSED purely for display by
+        system_tasks.py's `_sync_composite_statuses()`, without its real goal ever being paused.
+
+        cancel_task() must not trust that display-only status and must still cancel the real, still-live goal.
+        """
+        task_client = get_action_task_client("task_1")
+        task_client.register_done_callback(self._done_cb)
+        task_client.task_details.status = TaskStatus.PAUSED  # forced externally, _paused was never set
+        task_client._goal_handle = Mock(status=GoalStatus.STATUS_EXECUTING)
+        task_client._goal_done.set()  # pretend the cancel completed instantly - only the dispatch is under test
+
+        task_client.cancel_task()
+
+        # Took the real cancel path (request_canceling() against the live goal_handle), not the paused shortcut -
+        # which would never call request_canceling() and would fire the done callback synchronously instead.
+        mock_request_canceling.assert_called_once()
+        self.assertFalse(self.cb_called)
 
     def test_pause_task_no_goal_handle(self):
         """Tests that we do not crash if goal handle does not exist."""

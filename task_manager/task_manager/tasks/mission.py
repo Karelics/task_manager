@@ -89,6 +89,13 @@ class Mission:
         goal_id = bytes(goal_handle.goal_id.uuid)
         try:
             for subtask, mission_result in zip(request.subtasks, result.mission_results):
+                if goal_handle.is_cancel_requested:
+                    # A cancel/pause arrived before this subtask could be dispatched (e.g. a pause request
+                    # redirected onto the Mission's own goal while no subtask was tracked yet) - don't start it
+                    # for real just to immediately tear it down again. Subtasks from here on stay RECEIVED,
+                    # same as any other subtask that never got a chance to start.
+                    goal_handle.canceled()
+                    return result
                 self._current_subtask_ids[goal_id] = subtask.task_id
                 goal = ExecuteTask.Goal(
                     task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
@@ -126,7 +133,7 @@ class Mission:
             cancel_on_stop=True,
             topic=mission_topic,
             cancel_reported_as_success=False,
-            reentrant=True,
+            reentrant=False,
             msg_interface=MissionAction,
             task_server_type=TaskServerType.ACTION,
         )

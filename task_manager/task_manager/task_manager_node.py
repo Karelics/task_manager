@@ -176,7 +176,6 @@ class TaskManager(Node):
             resume_topic = "_" + resume_topic
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
-        cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
         parallel = ParallelTaskExecutor(
@@ -186,6 +185,9 @@ class TaskManager(Node):
             start_single_task_cb=self._start_single_task,
         )
         composites = {"system/mission": mission, "system/perform_in_parallel": parallel}
+        cancel_service = CancelTasksService(
+            self, topic=cancel_topic, active_tasks=self.active_tasks, composites=composites
+        )
         pause_service = PauseTasksService(
             self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites
         )

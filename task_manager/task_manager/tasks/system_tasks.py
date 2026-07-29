@@ -61,7 +61,7 @@ def _composite_active_children(
     tracker = composites.get(task_client.task_specs.task_name)
     if tracker is None:
         return None
-    goal_id = getattr(task_client, "goal_id", None)  # Composites are always action-backed, ActionTaskClient has this
+    goal_id = task_client.goal_id  # Composites are always action-backed, so this is never None once started
     if goal_id is None:
         return []
     return tracker.get_active_children(bytes(goal_id.uuid))
@@ -217,22 +217,43 @@ class StopTasksService(SystemTask):
 
 
 class CancelTasksService(SystemTask):
-    """Cancel any task based on the task_id."""
+    """Cancel any task based on the task_id.
 
-    def __init__(self, node: Node, topic: str, active_tasks: ActiveTasks) -> None:
+    Cancelling a Mission or a "perform in parallel" task by its own task_id still cancels that composite's own
+    real goal directly (which is what correctly cascades down - e.g. a Mission's own goal being cancelled is what
+    makes it notice and cancel its currently-running subtask). `successful_cancels` reports whichever leaf task(s)
+    are actually running underneath the requested id, purely so the response reflects what really got stopped.
+    """
+
+    def __init__(
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+    ) -> None:
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
+        self._composites = composites
 
         self._node.create_service(
             CancelTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
         )
+
+    def _resolve_reported_ids(self, task_id: str) -> List[str]:
+        """Best-effort resolves task_id down to whichever leaf task(s) are actually running underneath it right.
+
+        now (e.g. a Mission's current subtask) - purely for reporting. Must be called before actually cancelling,
+        since a cancelled composite is removed from ActiveTasks once done and couldn't be resolved afterward.
+        """
+        try:
+            return _resolve_down(task_id, self._active_tasks, self._composites)
+        except KeyError:
+            return [task_id]
 
     def service_cb(self, request: CancelTasks.Request, response: CancelTasks.Response) -> CancelTasks.Response:
         """Cancels the currently active tasks by given task_id."""
         cancelled = []
         response.success = True
         for task_id in request.cancelled_tasks:
+            reported_ids = self._resolve_reported_ids(task_id)
             try:
                 self._active_tasks.cancel_task(task_id)
             except KeyError:
@@ -245,7 +266,7 @@ class CancelTasksService(SystemTask):
                 response.success = False
                 continue
 
-            cancelled.append(task_id)
+            cancelled.extend(reported_ids)
 
         response.successful_cancels = cancelled
         return response
@@ -317,12 +338,14 @@ class PauseTasksService(SystemTask):
                 response.success = False
                 continue
 
-            self._active_tasks.publish_active_tasks()
             if any_failure:
                 response.success = False
                 continue
             paused.append(task_id)
 
+        # Publish once for the whole batch, so subscribers see one atomic final snapshot instead of N transient
+        # intermediate ones.
+        self._active_tasks.publish_active_tasks()
         response.successful_pauses = paused
         return response
 
@@ -384,12 +407,14 @@ class ResumeTasksService(SystemTask):
                 response.success = False
                 continue
 
-            self._active_tasks.publish_active_tasks()
             if any_failure:
                 response.success = False
                 continue
             resumed.append(task_id)
 
+        # Publish once for the whole batch, so subscribers see one atomic final snapshot instead of N transient
+        # intermediate ones.
+        self._active_tasks.publish_active_tasks()
         response.successful_resumes = resumed
         return response
 

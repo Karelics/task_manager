@@ -227,6 +227,53 @@ class MissionTests(TaskManagerTestNode):
         # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
         self.execute_cancel_task([mission_id])
 
+    def test_cancel_paused_mission(self):
+        """Cancelling a paused mission cancels the currently running subtask and the mission status should change to
+        CANCELED."""
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="fibonacci", task_data='{"order": 5}', task_id="123"),
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 0}', task_id="456"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        mission_goal_handle = self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("123")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        self.execute_pause_task([mission_id])
+        self.wait_for_task_status("123", TaskStatus.PAUSED)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+        # The not-yet-started subtask must stay untouched - it never even reached ActiveTasks
+        self.assertNotIn("456", self._tasks_started)
+
+        cancel_response = self.execute_cancel_task([mission_id])
+        self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            cancel_response.result.task_result, json.dumps({"success": True, "successful_cancels": ["123"]})
+        )
+
+        mission_response = mission_goal_handle.get_result()
+        mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
+
+        # The goal was cancelled through a system task (not a ROS-level cancel of this very goal), so per the
+        # same convention as system/cancel_task on a plain task, the outer wrapper reports ABORTED even though
+        # the semantic result status is CANCELED - see test_cancel_task_happy_flow in test_system_tasks.py.
+        self.assertEqual(mission_response.status, GoalStatus.STATUS_ABORTED)
+        self.assertEqual(mission_response.result.task_status, TaskStatus.CANCELED)
+        self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.CANCELED)
+
 
 if __name__ == "__main__":
     unittest.main()

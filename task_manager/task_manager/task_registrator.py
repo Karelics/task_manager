@@ -86,7 +86,7 @@ class TaskRegistrator:
         if self._duplicate_id_exists(request.task_id):
             raise DuplicateTaskIdException(f"Task with same the task ID {request.task_id} is already running")
 
-        if not task_specs.reentrant:
+        if not task_specs.reentrant and not self._is_nested_mission_start(request):
             self._cancel_task_of_same_type(request.task_name)
 
         if task_specs.blocking:
@@ -134,6 +134,17 @@ class TaskRegistrator:
             if task_cli.task_details.task_id == task_id:
                 return True
         return False
+
+    @staticmethod
+    def _is_nested_mission_start(request: ExecuteTask.Goal) -> bool:
+        """Whether request is a Mission starting one of its own subtasks that is itself another system/mission.
+
+        Mission.execute_cb() always starts its subtasks with source="Mission" (see mission.py). Without this exemption,
+        the "cancel any already-running task of the same type" safety net below would treat the outer, still-running
+        Mission as a conflicting duplicate and cancel it out from under itself the moment a nested mission subtask tries
+        to start.
+        """
+        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelTaskExecutor"))
 
     def _cancel_task_of_same_type(self, task_name: str) -> None:
         """Cancels the task with the same name.

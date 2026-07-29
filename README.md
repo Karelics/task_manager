@@ -102,7 +102,7 @@ Tasks that are implemented using ROS Services cannot be cancelled due to their n
 ### Task Pausing <a name="task-pausing"></a>
 Tasks can be paused and resumed by calling `system/pause_task` / `system/resume_task` with the Task IDs. A paused task gets the status `PAUSED`, stays visible in `/task_manager/active_tasks`, and is excluded from the blocking-task check — so a new blocking task can start while another one sits paused.
 
-Since ROS 2 actions have no native pause mechanism, pausing an action-backed task actually cancels its underlying goal right now, remembering the original goal data. Resuming re-sends that same goal as a brand-new one, i.e. execution restarts from scratch rather than continuing where it left off. Tasks implemented using ROS Services cannot be paused for the same reason they cannot be cancelled — attempting to pause one fails.
+Since ROS 2 actions have no native pause mechanism, pausing an action-backed task actually cancels its underlying goal right now, remembering the original goal data. Resuming re-sends that same goal as a brand-new one, i.e. execution restarts from scratch rather than continuing where it left off. ROS Services cannot be cancelled mid-flight, so pausing one instead waits out the task's `cancel_timeout` for the call to finish naturally: if it finishes within that grace period the pause is reported as successful (even though the task actually ended up `DONE` rather than `PAUSED`), and only a call that outlives the grace period is reported as a failed pause.
 
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.

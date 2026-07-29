@@ -174,6 +174,30 @@ class SystemTaskTests(TaskManagerTestNode):
         self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
         self.assertEqual(goal_handle_1.get_result().result.task_status, TaskStatus.CANCELED)
 
+    def test_resume_task_while_another_blocking_task_is_running(self) -> None:
+        """Resuming a blocking task while another blocking task is running must cancel the currently running one."""
+        goal_handle_1 = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=6, task_id="111")
+        self.wait_for_task_start("111")
+
+        pause_response = self.execute_pause_task(task_ids=["111"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        goal_handle_2 = self.start_fibonacci_action_task("fibonacci_blocking_2", run_time_secs=3, task_id="222")
+        self.wait_for_task_start("222")
+
+        resume_response = self.execute_resume_task(task_ids=["111"])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": ["111"]})
+        )
+
+        # The second (currently running) task must have been cancelled to make room for the first one resuming
+        self.assertEqual(goal_handle_2.get_result().result.task_status, TaskStatus.CANCELED)
+
+        # The resumed task must still finish normally
+        self.assertEqual(goal_handle_1.get_result().result.task_status, TaskStatus.DONE)
+
     def test_stop_task(self) -> None:
         """Test cases for Stop system task."""
         with self.subTest("Task with 'cancel_on_stop' field is cancelled"):

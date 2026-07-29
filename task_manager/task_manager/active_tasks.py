@@ -152,7 +152,7 @@ class ActiveTasks:
         :raises KeyError: if a task with the given id was not found.
         :raises CancelTaskFailedError: if canceling of the task fails.
         """
-        task_client = self._active_tasks[task_id]
+        task_client = self.get_task_client(task_id)
         task_client.cancel_task()
 
     def pause_task(self, task_id: str, publish: bool = True) -> None:
@@ -164,7 +164,7 @@ class ActiveTasks:
         :raises KeyError: if a task with the given id was not found.
         :raises PauseTaskFailedError: if pausing of the task fails.
         """
-        task_client = self._active_tasks[task_id]
+        task_client = self.get_task_client(task_id)
         task_client.pause_task()
         if publish:
             self.publish_active_tasks()  # Republish so the PAUSED status is visible on the active tasks topic
@@ -178,7 +178,17 @@ class ActiveTasks:
         :raises KeyError: if a task with the given id was not found.
         :raises ResumeTaskFailedError: if resuming of the task fails.
         """
-        task_client = self._active_tasks[task_id]
+        task_client = self.get_task_client(task_id)
+
+        # Check and cancel blocking task if needed
+        current_blocking_task = self.get_blocking_task()
+        if (
+            current_blocking_task
+            and current_blocking_task.task_details.task_id != task_id
+            and task_client.task_specs.blocking
+        ):
+            self.cancel_task(current_blocking_task.task_details.task_id)
+
         task_client.resume_task()
         if publish:
             self.publish_active_tasks()  # Republish so the IN_PROGRESS status is visible on the active tasks topic
