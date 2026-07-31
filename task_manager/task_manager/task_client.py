@@ -116,6 +116,10 @@ class ActionTaskClient(TaskClient):
         self._paused = False
         self._pause_done = Event()
         self._last_goal_message: Optional[Any] = None
+        # Result of each paused segment (the Result the server returned when its goal was cancelled by
+        # pause_task()), in chronological order. Merged into the final result via
+        # task_specs.result_concat_fields once the task truly finishes.
+        self._paused_results: List[Any] = []
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -262,7 +266,7 @@ class ActionTaskClient(TaskClient):
             return False
         self._paused = False
         self.task_details.status = TaskStatus.CANCELED
-        self.task_details.result = self.task_specs.msg_interface.Result()
+        self.task_details.result = self._merged_result()
         self._notify_done_callbacks()
         return True
 
@@ -329,7 +333,9 @@ class ActionTaskClient(TaskClient):
         """Pauses the task by cancelling the underlying action goal, keeping the original goal message stored so that
         resume_task() can restart it later.
 
-        The task's entry stays in ActiveTasks the whole time; no "task done" callbacks are fired.
+        The task's entry stays in ActiveTasks the whole time; no "task done" callbacks are fired. The partial
+        result the server returns when the goal is cancelled is kept, and any fields listed in
+        `task_specs.result_concat_fields` are concatenated into the task's final result once it truly finishes.
 
         :raises PauseTaskFailedError: If the task is already paused/finished, or the cancel fails/times out.
         """
@@ -383,7 +389,7 @@ class ActionTaskClient(TaskClient):
             # start_task_async() already set status to ERROR, but goal_done is only ever set via the done-callback
             # chain, which nothing else will trigger for a start failure - without this, the task would stay
             # wedged in ActiveTasks forever (never finished, never cancellable, since there's no live goal_handle).
-            self.task_details.result = self.task_specs.msg_interface.Result()
+            self.task_details.result = self._merged_result()
             self._notify_done_callbacks()
             raise ResumeTaskFailedError(f"Failed to resume the task: {e}") from e
 
@@ -394,7 +400,11 @@ class ActionTaskClient(TaskClient):
         """
         if self._pausing and self._canceled_result(future):
             # This is the cancel triggered from pause_task(). The task is not actually
-            # finished, so we skip the normal "task done" side effects entirely.
+            # finished, so we skip the normal "task done" side effects entirely. The partial result the
+            # server attached to the cancelled goal is kept, to be concatenated into the final result
+            # (see _merged_result).
+            if not future.cancelled():
+                self._paused_results.append(future.result().result)
             self._pause_done.set()
             return
 
@@ -441,7 +451,40 @@ class ActionTaskClient(TaskClient):
                 self.task_details.status = TaskStatus.DONE
             else:
                 self.task_details.status = end_goal_status
-        self.task_details.result = result.result
+        self.task_details.result = self._merged_result(result.result)
+
+    def _merged_result(self, final_result: Optional[Any] = None) -> Any:
+        """Merges the results collected from paused segments (see `pause_task`) into the task's final result.
+
+        Each field listed in `task_specs.result_concat_fields` is concatenated across all segments in
+        chronological order; every other field keeps final_result's value as-is. With final_result=None (the task
+        never produced a final segment result, e.g. it was cancelled or failed to restart while paused), the last
+        paused segment's result serves as the base instead - or an empty Result if there are no segments at all.
+
+        Best-effort: a listed field that doesn't exist or isn't concatenatable is logged and skipped, never fatal.
+        """
+        partials = self._paused_results
+        if final_result is None:
+            if not partials:
+                return self.task_specs.msg_interface.Result()
+            final_result, partials = partials[-1], partials[:-1]
+        if not partials:
+            return final_result
+
+        for field_name in self.task_specs.result_concat_fields:
+            try:
+                values = [getattr(partial, field_name) for partial in partials] + [getattr(final_result, field_name)]
+                if isinstance(values[0], str):
+                    setattr(final_result, field_name, "".join(values))
+                else:
+                    setattr(final_result, field_name, [item for value in values for item in value])
+            except (AttributeError, TypeError, AssertionError) as e:
+                self._node.get_logger().error(
+                    f"Failed to concatenate result field '{field_name}' of task "
+                    f"'{self.task_specs.task_name}' across its paused segments: {repr(e)}. "
+                    f"Keeping only the final segment's value for this field."
+                )
+        return final_result
 
     @staticmethod
     def _wait_for_future_to_complete(future: Future, timeout: Optional[float]) -> None:

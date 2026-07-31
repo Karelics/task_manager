@@ -34,8 +34,16 @@ from example_interfaces.action import Fibonacci
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
-from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, PauseTaskFailedError, ServiceTaskClient
+from task_manager.task_client import (
+    ActionTaskClient,
+    CancelTaskFailedError,
+    PauseTaskFailedError,
+    ResumeTaskFailedError,
+    ServiceTaskClient,
+    TaskStartError,
+)
 from task_manager.task_details import TaskDetails
+from task_manager.task_specs import TaskServerType, TaskSpecs
 
 # pylint: disable=protected-access
 
@@ -189,6 +197,91 @@ class TestActionTaskClient(unittest.TestCase):
         task_client.resume_task()
         self.assertIsNone(task_client._goal_handle)
 
+    def test_pause_captures_partial_result(self):
+        """The Result the server attaches to the pause-cancel must be stored, without any "task done" side effects."""
+        task_client = get_action_task_client("task_1")
+        task_client.register_done_callback(self._done_cb)
+        task_client._pausing = True
+        goal_future = Future(executor=Mock())
+        goal_future._result = Fibonacci.Impl.GetResultService.Response(
+            status=GoalStatus.STATUS_CANCELED, result=Fibonacci.Result(sequence=[0, 1, 1])
+        )
+
+        task_client._goal_done_cb(goal_future)
+
+        self.assertTrue(task_client._pause_done.is_set())
+        self.assertFalse(self.cb_called)
+        self.assertFalse(task_client.goal_done)
+        self.assertEqual(len(task_client._paused_results), 1)
+        self.assertEqual(extract_values(task_client._paused_results[0]), {"sequence": [0, 1, 1]})
+
+    def test_final_result_concatenates_paused_segments(self):
+        """Fields listed in result_concat_fields are concatenated across paused segments and the final segment, in
+        chronological order."""
+        task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
+        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
+        goal_future = Future(executor=Mock())
+        goal_future._result = Fibonacci.Impl.GetResultService.Response(
+            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
+        )
+
+        task_client._goal_done_cb(goal_future)
+
+        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
+        result = extract_values(task_client.task_details.result)
+        self.assertEqual(result, {"sequence": [0, 1, 1, 2, 3, 5]})
+
+    def test_final_result_without_concat_fields_keeps_final_segment_only(self):
+        """With no result_concat_fields configured, paused segments' results are discarded as before."""
+        task_client = get_concat_action_task_client(result_concat_fields=[])
+        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+        goal_future = Future(executor=Mock())
+        goal_future._result = Fibonacci.Impl.GetResultService.Response(
+            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
+        )
+
+        task_client._goal_done_cb(goal_future)
+
+        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [3, 5]})
+
+    def test_final_result_skips_bad_concat_field(self):
+        """A configured field that can't be concatenated is skipped without breaking the rest of the result."""
+        task_client = get_concat_action_task_client(result_concat_fields=["no_such_field", "sequence"])
+        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+        goal_future = Future(executor=Mock())
+        goal_future._result = Fibonacci.Impl.GetResultService.Response(
+            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
+        )
+
+        task_client._goal_done_cb(goal_future)
+
+        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
+        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [0, 1, 3, 5]})
+
+    def test_cancel_while_paused_reports_merged_paused_segments(self):
+        """Cancelling a paused task must report the merged partial results instead of an empty Result."""
+        task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
+        task_client._paused = True
+        task_client.task_details.status = TaskStatus.PAUSED
+        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
+
+        task_client.cancel_task()
+
+        self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
+        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [0, 1, 1, 2]})
+
+    def test_resume_failure_reports_merged_paused_segments(self):
+        """A paused task whose restart fails must still report the merged partial results."""
+        task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
+        task_client._paused = True
+        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+
+        with patch.object(ActionTaskClient, "start_task_async", side_effect=TaskStartError("server gone")):
+            self.assertRaises(ResumeTaskFailedError, task_client.resume_task)
+
+        self.assertTrue(task_client.goal_done)
+        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [0, 1]})
+
 
 class ServiceTaskClientUnittests(unittest.TestCase):
     """Unittests for ServiceTaskClient.
@@ -248,6 +341,23 @@ def get_action_task_client(
     return ActionTaskClient(
         Mock(spec=Node), task_details, task_specs=Mock(task_name=task_name), action_clients={task_name: Mock()}
     )
+
+
+def get_concat_action_task_client(result_concat_fields) -> ActionTaskClient:
+    """ActionTaskClient with a real Fibonacci-backed TaskSpecs, for the paused-segment result concatenation tests."""
+    task_details = TaskDetails(
+        task_id="1",
+        source="CLOUD",
+        status=TaskStatus.IN_PROGRESS,
+    )
+    task_specs = TaskSpecs(
+        task_name="fibonacci",
+        topic="/fibonacci",
+        msg_interface=Fibonacci,
+        task_server_type=TaskServerType.ACTION,
+        result_concat_fields=result_concat_fields,
+    )
+    return ActionTaskClient(Mock(spec=Node), task_details, task_specs=task_specs, action_clients={"fibonacci": Mock()})
 
 
 if __name__ == "__main__":

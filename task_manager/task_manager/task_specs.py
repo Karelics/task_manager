@@ -14,9 +14,9 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, List
 
 
 class TaskServerType(Enum):
@@ -41,3 +41,7 @@ class TaskSpecs:
     service_success_field: str = ""
     cancel_timeout: float = 5.0
     require_finish_on_parallel_cancel: bool = True
+    # Action-result sequence/string fields whose partial values, collected each time the task is paused, are
+    # concatenated (in chronological order) into the final result when the task eventually finishes. Fields not
+    # listed here keep only the final segment's value. Only meaningful for action-backed tasks.
+    result_concat_fields: List[str] = field(default_factory=list)

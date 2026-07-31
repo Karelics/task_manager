@@ -120,6 +120,22 @@ class TaskManager(Node):
                     )
                     sys.exit()
 
+            result_concat_fields = (
+                self.declare_parameter(f"{task}.result_concat_fields", Parameter.Type.STRING_ARRAY).value or []
+            )
+
+            # Check that every result_concat_field truly exists in the action result, if any are set
+            for concat_field in result_concat_fields:
+                try:
+                    getattr(msg_interface.Result(), concat_field)
+                except AttributeError:
+                    self.get_logger().error(
+                        f"Failed to get attribute '{concat_field}' for the task "
+                        f"{task_name}. The field does not exist in the "
+                        f"{msg_interface.__name__}.Result() action message. Check the task configuration. "
+                    )
+                    sys.exit()
+
             task_specs = TaskSpecs(
                 task_name=task_name,
                 blocking=self.declare_parameter(f"{task}.blocking", Parameter.Type.BOOL).value,
@@ -134,6 +150,7 @@ class TaskManager(Node):
                 require_finish_on_parallel_cancel=self.declare_parameter(
                     f"{task}.require_finish_on_parallel_cancel", True
                 ).value,
+                result_concat_fields=list(result_concat_fields),
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
