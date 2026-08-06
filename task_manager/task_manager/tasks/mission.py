@@ -29,9 +29,10 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
+from task_manager.tasks.system_tasks import ActiveChildrenTracker
 
 
-class Mission:
+class Mission(ActiveChildrenTracker):
     """Implements the Mission task, which is able to compose multiple existing tasks."""
 
     def __init__(
@@ -46,11 +47,8 @@ class Mission:
         :param execute_task_cb: Callback to execute a single task
         """
         self.execute_task_cb = execute_task_cb
-        # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask. Keyed
-        # by goal_id (shared by the client and server side of the same action call) rather than the Task Manager's
-        # own task_id, since Mission has no wire-level knowledge of the latter. Supports multiple concurrent
-        # missions, should that ever become possible.
-        self._current_subtask_ids: Dict[bytes, str] = {}
+        # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
+        self._goal_id_to_subtask_id: Dict[bytes, str] = {}
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -61,12 +59,9 @@ class Mission:
         )
 
     def get_active_children(self, goal_id: bytes) -> List[str]:
-        """Satisfies the generic `ActiveChildrenTracker` protocol used by pause/resume (system_tasks.py): a Mission's
-        "active children" is just its single currently-running subtask, if any.
-
-        Empty list if that mission invocation isn't running (or isn't known).
-        """
-        current = self._current_subtask_ids.get(goal_id)
+        """Returns the mission's active children i.e. its single currently-running subtask or an empty list if that
+        mission subtask isn't running (or isn't known)."""
+        current = self._goal_id_to_subtask_id.get(goal_id)
         return [current] if current is not None else []
 
     def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
@@ -90,13 +85,11 @@ class Mission:
         try:
             for subtask, mission_result in zip(request.subtasks, result.mission_results):
                 if goal_handle.is_cancel_requested:
-                    # A cancel/pause arrived before this subtask could be dispatched (e.g. a pause request
-                    # redirected onto the Mission's own goal while no subtask was tracked yet) - don't start it
-                    # for real just to immediately tear it down again. Subtasks from here on stay RECEIVED,
-                    # same as any other subtask that never got a chance to start.
+                    # A cancel/pause arrived before this subtask could be dispatched - don't start it
+                    # just to immediately tear it down again.
                     goal_handle.canceled()
                     return result
-                self._current_subtask_ids[goal_id] = subtask.task_id
+                self._goal_id_to_subtask_id[goal_id] = subtask.task_id
                 goal = ExecuteTask.Goal(
                     task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
                 )
@@ -122,7 +115,7 @@ class Mission:
             goal_handle.succeed()
             return result
         finally:
-            self._current_subtask_ids.pop(goal_id, None)
+            self._goal_id_to_subtask_id.pop(goal_id, None)
 
     @staticmethod
     def get_task_specs(mission_topic) -> TaskSpecs:

@@ -96,7 +96,7 @@ def _find_enclosing_composite(
     """
     for task_name in composites:
         for candidate in active_tasks.get_active_tasks_by_name(task_name):
-            if task_id in (_composite_active_children(candidate, composites) or []):
+            if task_id in (_composite_active_children(candidate, composites)):
                 return candidate.task_details.task_id
     return None
 
@@ -147,34 +147,34 @@ def _pause_or_resume_group(
     from_statuses: Tuple[TaskStatus, ...],
     func_to_call: Callable[[str], bool],
 ) -> bool:
-    """Resolves task_id (Mission/parallel-aware) to its full set of target leaves, and applies try_member to.
+    """Run function 'func_to_call' on every task which is linked to the task with given 'task_id'.
 
-    every one of them currently in one of from_statuses - best-effort: a member that fails doesn't stop the
-    others from being attempted, and members that already succeeded are never rolled back. Re-syncs every
-    composite's own status from its children afterward.
+    Finds task ids of all related tasks, eg. if the given task is part of a mission, all the mission
+    tasks will be listed and then the given function will be performed for all of the tasks, unless
+    the task has already finished or already in the target state.
+    Finally all of the related tasks should be in the same state.
 
-    :param task_id: the task_id given in the pause/resume request.
+    :param task_id: the task_id of task we want to operate on.
     :param active_tasks: the ActiveTasks instance to operate on.
-    :param composites: the dict of composite task names to their ActiveChildrenTracker instances.
+    :param composites: Dict of available composite task names.
     :param from_statuses: the set of statuses that a member must be in to be attempted for transition.
-        Members already in the target state are skipped, and members that have finished on their own are
-        also skipped (not a failure).
-    :param func_to_call: the function to call for each member that is in from_statuses. Should return True
+        Members already in the target state and members that have finished on their own are skipped.
+    :param func_to_call: the function to call for each task. Should return True
         if the transition succeeded, False if it failed.
     :raises KeyError: if task_id is not an active task.
-    :return: True if any member failed to transition.
+    :return: True if everything succeeded.
     """
     target_ids = _resolve_target_task_ids(task_id, active_tasks, composites)
 
-    any_failure = False
+    success = True
     for member_id in target_ids:
         if active_tasks.get_task_client(member_id).task_details.status not in from_statuses:
             continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
         if not func_to_call(member_id):
-            any_failure = True
+            success = False
 
     _sync_composite_statuses(active_tasks, composites)
-    return any_failure
+    return success
 
 
 class SystemTask(ABC):  # pylint: disable=too-few-public-methods
@@ -246,11 +246,8 @@ class CancelTasksService(SystemTask):
         )
 
     def _resolve_reported_ids(self, task_id: str) -> List[str]:
-        """Best-effort resolves task_id down to whichever leaf task(s) are actually running underneath it right.
-
-        now (e.g. a Mission's current subtask) - purely for reporting. Must be called before actually cancelling,
-        since a cancelled composite is removed from ActiveTasks once done and couldn't be resolved afterward.
-        """
+        """Best-effort resolves task_id down to whichever leaf task(s) are actually running underneath it right now
+        (e.g. a Mission's current subtask)."""
         try:
             return _resolve_down(task_id, self._active_tasks, self._composites)
         except KeyError:
@@ -334,7 +331,7 @@ class PauseTasksService(SystemTask):
         response.success = True
         for task_id in request.paused_tasks:
             try:
-                any_failure = _pause_or_resume_group(
+                success = _pause_or_resume_group(
                     task_id,
                     self._active_tasks,
                     self._composites,
@@ -346,7 +343,7 @@ class PauseTasksService(SystemTask):
                 response.success = False
                 continue
 
-            if any_failure:
+            if not success:
                 response.success = False
                 continue
             paused.append(task_id)
@@ -407,7 +404,7 @@ class ResumeTasksService(SystemTask):
         response.success = True
         for task_id in request.resumed_tasks:
             try:
-                any_failure = _pause_or_resume_group(
+                success = _pause_or_resume_group(
                     task_id, self._active_tasks, self._composites, (TaskStatus.PAUSED,), self._try_resume
                 )
             except KeyError:
@@ -415,7 +412,7 @@ class ResumeTasksService(SystemTask):
                 response.success = False
                 continue
 
-            if any_failure:
+            if not success:
                 response.success = False
                 continue
             resumed.append(task_id)

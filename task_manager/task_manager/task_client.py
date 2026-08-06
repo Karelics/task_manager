@@ -420,10 +420,9 @@ class ActionTaskClient(TaskClient):
 
     @staticmethod
     def _canceled_result(future: Future) -> bool:
-        """Whether a goal completion represents a genuine CANCELED outcome (either the Python future itself was.
+        """Whether a goal completion represents a genuine CANCELED outcome.
 
-        cancelled, or the server reported the goal as cancelled) - as opposed to the goal having actually
-        succeeded or aborted on its own while a cancel request was in flight.
+        Either the Python future itself was cancelled, or the server reported the goal as cancelled.
         """
         if future.cancelled():
             return True

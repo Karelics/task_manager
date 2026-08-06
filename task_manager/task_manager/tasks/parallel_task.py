@@ -61,7 +61,7 @@ class ParallelTask:
     @property
     def active(self) -> bool:
         """
-        :return: True if the underlying task is still alive (running or paused), otherwise
+        :return: True if the underlying task is still alive (running or paused),
             False if it has finished (done/error/canceled).
         """
         return self._task_client.task_details.status in [

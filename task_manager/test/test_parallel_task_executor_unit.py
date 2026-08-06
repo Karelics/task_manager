@@ -113,7 +113,7 @@ def test_cancel_async_always_requests_canceling_regardless_of_paused_state(statu
 def test_get_active_children_filters_out_finished_members(parallel_task_executor: ParallelTaskExecutor) -> None:
     """Test that get_active_children returns only the active children of a given goal_id."""
     goal_id = b"\x01" * 16
-    parallel_task_executor._active_subtasks[goal_id] = [
+    parallel_task_executor._goal_id_to_subtask_ids[goal_id] = [
         make_parallel_task(TaskStatus.IN_PROGRESS, task_id="running"),
         make_parallel_task(TaskStatus.PAUSED, task_id="paused"),
         make_parallel_task(TaskStatus.DONE, task_id="done"),
