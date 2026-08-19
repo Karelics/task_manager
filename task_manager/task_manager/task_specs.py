@@ -27,7 +27,7 @@ class TaskServerType(Enum):
 
 
 @dataclass
-class TaskSpecs:
+class TaskSpecs:  # pylint: disable=too-many-instance-attributes
     """Task specifications."""
 
     task_name: str

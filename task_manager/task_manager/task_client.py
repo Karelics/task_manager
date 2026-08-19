@@ -90,7 +90,8 @@ class TaskClient(ABC):
         """Resume a previously paused task synchronously."""
 
 
-class ActionTaskClient(TaskClient):
+# TODO: Bundle pausing related members to resolve too-many-instance-attributes
+class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attributes
     """Task client that keeps track of a single Action task."""
 
     DONE_STATES = [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED]

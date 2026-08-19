@@ -174,7 +174,7 @@ class TaskManager(Node):
                         execute_task_cb=self.execute_task,
                     )
 
-    def setup_system_tasks(self):
+    def setup_system_tasks(self):  # pylint: disable=too-many-locals
         """Create servers for system tasks."""
         stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
