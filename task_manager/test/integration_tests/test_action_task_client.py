@@ -34,7 +34,7 @@ from example_interfaces.action import Fibonacci
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
-from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, TaskStartError
+from task_manager.task_client import ActionTaskClient, CancelTaskFailedError, PauseTaskFailedError, TaskStartError
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
@@ -225,6 +225,51 @@ class TestActionTaskClient(unittest.TestCase):
         client.cancel_task()
         client._goal_done.wait(timeout=1)
         self.assertEqual(client.task_details.status, TaskStatus.DONE)
+
+    def test_pause_resume_happy_flow(self):
+        """Pausing stops the goal and sets status to PAUSED; resuming restarts it and it can finish normally."""
+        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        client.start_task_async(Fibonacci.Goal(order=5))
+        sleep(0.2)  # Let the goal get into execution before pausing it
+
+        client.pause_task()
+        self.assertEqual(client.task_details.status, TaskStatus.PAUSED)
+        self.assertFalse(client.goal_done)
+
+        client.resume_task()
+        self.assertEqual(client.task_details.status, TaskStatus.IN_PROGRESS)
+
+        client._goal_done.wait(timeout=10)
+        self.assertEqual(client.task_details.status, TaskStatus.DONE)
+
+    def test_pause_then_cancel(self):
+        """Cancelling a paused task must return promptly and finish it as CANCELED."""
+        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        client.start_task_async(Fibonacci.Goal(order=5))
+        sleep(0.2)
+
+        client.pause_task()
+        client.cancel_task()
+        self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
+
+    def test_resume_without_pause_is_noop(self):
+        """Resuming a task that was never paused does not affect it."""
+        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        client.start_task_async(Fibonacci.Goal(order=0))
+
+        client.resume_task()
+
+        client._goal_done.wait(timeout=5)
+        self.assertEqual(client.task_details.status, TaskStatus.DONE)
+
+    def test_pause_already_finished_task_fails(self):
+        """Pausing a task that has already finished raises."""
+        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
+        client.start_task_async(Fibonacci.Goal(order=0))
+        client._goal_done.wait(timeout=5)
+
+        with self.assertRaises(PauseTaskFailedError):
+            client.pause_task()
 
 
 if __name__ == "__main__":

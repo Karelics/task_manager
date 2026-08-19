@@ -26,9 +26,12 @@ import pytest
 
 # Task Manager messages
 from task_manager_msgs.action import PerformInParallel
+from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
 from task_manager.task_client import TaskClient
+from task_manager.task_details import TaskDetails
+from task_manager.tasks.parallel_task import ParallelTask
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor, PreemptedException
 
 # This test file covers the lines which are difficult to cover with integration tests
@@ -81,3 +84,44 @@ def test_gather_and_try_preempt(parallel_task_executor: ParallelTaskExecutor) ->
     goal_handle.request.subtasks = [MagicMock(), MagicMock()]
     parallel_task_executor._latest_goal_handle = MagicMock()
     assert pytest.raises(PreemptedException, parallel_task_executor._gather_and_try_to_run_subtasks, goal_handle, [])
+
+
+def make_parallel_task(status: str, task_id: str = "t1") -> ParallelTask:
+    """Builds a ParallelTask wrapping a Mock TaskClient with the given status."""
+    task_client = MagicMock(spec=TaskClient)
+    task_client.task_details = TaskDetails(task_id=task_id, source="TEST", status=status)
+    task_client.task_specs.task_name = "some_task"
+    return ParallelTask(task_client)
+
+
+def test_paused_member_is_still_active() -> None:
+    """A paused member is still a live part of the group - not finished - so it must not look "done" to
+    _wait_actions_done and trigger a premature group teardown."""
+    assert make_parallel_task(TaskStatus.PAUSED).active is True
+
+
+@pytest.mark.parametrize("status", [TaskStatus.PAUSED, TaskStatus.IN_PROGRESS])
+def test_cancel_async_always_requests_canceling_regardless_of_paused_state(status: str) -> None:
+    """cancel_async() doesn't need to special-case PAUSED itself anymore - request_canceling() now handles a
+    paused (already-cancelled) goal transparently, so the caller just always calls it the same way."""
+    task = make_parallel_task(status)
+    task.cancel_async()
+    task._task_client.request_canceling.assert_called_once()
+    task._task_client.cancel_task.assert_not_called()
+
+
+def test_get_active_children_filters_out_finished_members(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """Test that get_active_children returns only the active children of a given goal_id."""
+    goal_id = b"\x01" * 16
+    parallel_task_executor._goal_id_to_subtask_ids[goal_id] = [
+        make_parallel_task(TaskStatus.IN_PROGRESS, task_id="running"),
+        make_parallel_task(TaskStatus.PAUSED, task_id="paused"),
+        make_parallel_task(TaskStatus.DONE, task_id="done"),
+    ]
+
+    assert parallel_task_executor.get_active_children(goal_id) == ["running", "paused"]
+
+
+def test_get_active_children_unknown_goal_id_returns_empty(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """Test that get_active_children returns an empty list for an unknown goal_id."""
+    assert parallel_task_executor.get_active_children(b"\x00" * 16) == []

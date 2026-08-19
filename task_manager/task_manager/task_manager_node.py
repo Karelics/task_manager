@@ -49,7 +49,13 @@ from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsi
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
-from task_manager.tasks.system_tasks import CancelTasksService, StopTasksService, WaitTask
+from task_manager.tasks.system_tasks import (
+    CancelTasksService,
+    PauseTasksService,
+    ResumeTasksService,
+    StopTasksService,
+    WaitTask,
+)
 from task_manager.tasks.task_action_server import TaskActionServer
 from task_manager.tasks.task_service_server import TaskServiceServer
 
@@ -114,6 +120,22 @@ class TaskManager(Node):
                     )
                     sys.exit()
 
+            result_concat_fields = (
+                self.declare_parameter(f"{task}.result_concat_fields", Parameter.Type.STRING_ARRAY).value or []
+            )
+
+            # Check that every result_concat_field truly exists in the action result, if any are set
+            for concat_field in result_concat_fields:
+                try:
+                    getattr(msg_interface.Result(), concat_field)
+                except AttributeError:
+                    self.get_logger().error(
+                        f"Failed to get attribute '{concat_field}' for the task "
+                        f"{task_name}. The field does not exist in the "
+                        f"{msg_interface.__name__}.Result() action message. Check the task configuration. "
+                    )
+                    sys.exit()
+
             task_specs = TaskSpecs(
                 task_name=task_name,
                 blocking=self.declare_parameter(f"{task}.blocking", Parameter.Type.BOOL).value,
@@ -128,6 +150,7 @@ class TaskManager(Node):
                 require_finish_on_parallel_cancel=self.declare_parameter(
                     f"{task}.require_finish_on_parallel_cancel", True
                 ).value,
+                result_concat_fields=list(result_concat_fields),
             )
             self.known_tasks[task_specs.task_name] = task_specs
 
@@ -151,10 +174,12 @@ class TaskManager(Node):
                         execute_task_cb=self.execute_task,
                     )
 
-    def setup_system_tasks(self):
+    def setup_system_tasks(self):  # pylint: disable=too-many-locals
         """Create servers for system tasks."""
         stop_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/stop"
         cancel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/cancel_task"
+        pause_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/pause_task"
+        resume_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/resume_task"
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
         parallel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/perform_in_parallel"
@@ -164,9 +189,10 @@ class TaskManager(Node):
             # so Missions are always public.
             stop_topic = "_" + stop_topic
             cancel_topic = "_" + cancel_topic
+            pause_topic = "_" + pause_topic
+            resume_topic = "_" + resume_topic
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
-        cancel_service = CancelTasksService(self, topic=cancel_topic, active_tasks=self.active_tasks)
         mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
         parallel = ParallelTaskExecutor(
@@ -175,9 +201,21 @@ class TaskManager(Node):
             prepare_execute_task_result_cb=self._prepare_execute_task_result,
             start_single_task_cb=self._start_single_task,
         )
+        composites = {"system/mission": mission, "system/perform_in_parallel": parallel}
+        cancel_service = CancelTasksService(
+            self, topic=cancel_topic, active_tasks=self.active_tasks, composites=composites
+        )
+        pause_service = PauseTasksService(
+            self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites
+        )
+        resume_service = ResumeTasksService(
+            self, topic=resume_topic, active_tasks=self.active_tasks, composites=composites
+        )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
+        self.known_tasks["system/pause_task"] = pause_service.get_task_specs(pause_topic)
+        self.known_tasks["system/resume_task"] = resume_service.get_task_specs(resume_topic)
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
         self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)
@@ -269,7 +307,9 @@ class TaskManager(Node):
             )
             return None, ExecuteTask.Result().ERROR_UNKNOWN_TASK
 
-        self.get_logger().info(f"Got a request from '{request.source}' to start '{request.task_name}' task.")
+        self.get_logger().info(
+            f"Got a request from '{request.source}' to start '{request.task_name}' task. [{request.task_id}]"
+        )
         try:
             task_client = self.task_registrator.start_new_task(request, self.known_tasks[request.task_name])
         except DuplicateTaskIdException as error_msg:
@@ -310,7 +350,7 @@ class TaskManager(Node):
         msg = ActiveTaskArray(active_tasks=task_messages)
         self._active_tasks_pub.publish(msg)
 
-    def _task_done_cb(self, task_specs: TaskSpecs, task_details: TaskDetails):
+    def _task_done_cb(self, task_specs: TaskSpecs, task_details: TaskDetails) -> None:
         result_msg = TaskDoneResult(
             task_id=task_details.task_id,
             task_name=task_specs.task_name,

@@ -23,7 +23,7 @@ from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
-from task_manager.task_client import CancelTaskFailedError, TaskClient
+from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError, TaskClient
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
 
@@ -147,6 +147,12 @@ class TestActiveTasks(unittest.TestCase):
         task = self.active_tasks.get_blocking_task()
         self.assertIsNone(task)
 
+    def test_get_blocking_task_skips_paused(self):
+        """A paused blocking task must not be returned, so a new blocking task is free to start."""
+        self.cli_2.task_details.status = TaskStatus.PAUSED
+        task = self.active_tasks.get_blocking_task()
+        self.assertIsNone(task)
+
     def test_cancel_tasks_on_stop(self):
         """Test canceling all tasks to be canceled on stop."""
         self.active_tasks.cancel_tasks_on_stop()
@@ -167,6 +173,36 @@ class TestActiveTasks(unittest.TestCase):
         self.active_tasks.cancel_task(self.cli_1.task_details.task_id)
         self.cli_1.cancel_task.assert_called_once()
         self.assertIn(self.cli_1, self.active_tasks._active_tasks.values())
+
+    def test_pause_task(self):
+        """Test pausing a task by task id."""
+        self.active_tasks.pause_task(self.cli_1.task_details.task_id)
+        self.cli_1.pause_task.assert_called_once()
+        self.changed_cb.assert_called_once()
+
+    def test_pause_task_not_found(self):
+        """Test pausing a task with an unknown task id."""
+        self.assertRaises(KeyError, self.active_tasks.pause_task, "non_existing_id")
+
+    def test_pause_task_failure_propagates(self):
+        """Test that a pause failure on the task client propagates to the caller."""
+        self.cli_1.pause_task.side_effect = PauseTaskFailedError()
+        self.assertRaises(PauseTaskFailedError, self.active_tasks.pause_task, self.cli_1.task_details.task_id)
+
+    def test_resume_task(self):
+        """Test resuming a task by task id."""
+        self.active_tasks.resume_task(self.cli_1.task_details.task_id)
+        self.cli_1.resume_task.assert_called_once()
+        self.changed_cb.assert_called_once()
+
+    def test_resume_task_not_found(self):
+        """Test resuming a task with an unknown task id."""
+        self.assertRaises(KeyError, self.active_tasks.resume_task, "non_existing_id")
+
+    def test_resume_task_failure_propagates(self):
+        """Test that a resume failure on the task client propagates to the caller."""
+        self.cli_1.resume_task.side_effect = ResumeTaskFailedError()
+        self.assertRaises(ResumeTaskFailedError, self.active_tasks.resume_task, self.cli_1.task_details.task_id)
 
     def test_get_active_tasks(self):
         """Test getting all the currently active tasks."""

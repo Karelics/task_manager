@@ -25,6 +25,8 @@ set(msg_files
 
 set(srv_files
   "srv/CancelTasks.srv"
+  "srv/PauseTasks.srv"
+  "srv/ResumeTasks.srv"
   "srv/StopTasks.srv"
 )
 
