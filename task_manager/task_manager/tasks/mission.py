@@ -118,13 +118,13 @@ class Mission(SystemTask, ActiveChildrenTracker):
             self._goal_id_to_subtask_id.pop(goal_id, None)
 
     @staticmethod
-    def get_task_specs(mission_topic) -> TaskSpecs:
+    def get_task_specs(topic: str) -> TaskSpecs:
         """Returns TaskSpecs object that describes the task properties."""
         return TaskSpecs(
             task_name="system/mission",
             blocking=False,
             cancel_on_stop=True,
-            topic=mission_topic,
+            topic=topic,
             cancel_reported_as_success=False,
             reentrant=False,
             msg_interface=MissionAction,
