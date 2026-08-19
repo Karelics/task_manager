@@ -301,6 +301,85 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
 
         self.assertEqual(result.result.task_status, TaskStatus.DONE)
 
+    def _active_task_ids_by_name(self) -> Dict[str, str]:
+        """Maps task_name -> task_id for all currently active tasks (only useful for names known to be unique)."""
+        return {
+            task.task_specs.task_name: task.task_details.task_id
+            for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+
+    def test_pause_one_subtask_pauses_the_whole_group(self):
+        """Pausing one member of a parallel group pauses every member together, and reflects PAUSED onto the parallel
+        task's own status.
+
+        Resuming any one member resumes the whole group again.
+        """
+        goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="fib2", task_name="fibonacci_2", task_data='{"order": 10}'),
+            ]
+        )
+        goal_handle = self.run_parallel_tasks(goal)
+        self.wait_for_task_start("fib")
+        self.wait_for_task_start("fib2")
+        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+
+        pause_response = self.execute_pause_task(["fib"])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(pause_response.result.task_result, json.dumps({"success": True, "successful_pauses": ["fib"]}))
+
+        self.wait_for_task_status("fib", TaskStatus.PAUSED)
+        self.wait_for_task_status("fib2", TaskStatus.PAUSED)
+        self.assertEqual(
+            self.task_manager_node.active_tasks.get_task_client(parallel_id).task_details.status, TaskStatus.PAUSED
+        )
+
+        # Resuming any one member resumes the whole group, and the parallel task's own status too
+        resume_response = self.execute_resume_task(["fib2"])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": ["fib2"]})
+        )
+
+        self.wait_for_task_status("fib", TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status("fib2", TaskStatus.IN_PROGRESS)
+        self.assertEqual(
+            self.task_manager_node.active_tasks.get_task_client(parallel_id).task_details.status,
+            TaskStatus.IN_PROGRESS,
+        )
+
+        # Clean up - cancel the whole group so the test doesn't wait out the full fibonacci duration
+        self.execute_cancel_task([parallel_id])
+        goal_handle.get_result()
+
+    def test_pause_and_resume_parallel_task_by_its_own_id(self):
+        """Pausing/resuming the parallel task directly by its own task_id (instead of one of its members) reaches the
+        same outcome: every member gets paused/resumed together."""
+        goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="fib2", task_name="fibonacci_2", task_data='{"order": 10}'),
+            ]
+        )
+        goal_handle = self.run_parallel_tasks(goal)
+        self.wait_for_task_start("fib")
+        self.wait_for_task_start("fib2")
+        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+
+        pause_response = self.execute_pause_task([parallel_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("fib", TaskStatus.PAUSED)
+        self.wait_for_task_status("fib2", TaskStatus.PAUSED)
+
+        resume_response = self.execute_resume_task([parallel_id])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("fib", TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status("fib2", TaskStatus.IN_PROGRESS)
+
+        self.execute_cancel_task([parallel_id])
+        goal_handle.get_result()
+
     @staticmethod
     def parse_task_results(task_results: str) -> Dict[str, Dict[str, Any]]:
         """Parse the task results from a JSON string to a dictionary with task_id as key and the result as value."""

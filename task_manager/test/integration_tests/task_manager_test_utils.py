@@ -42,7 +42,7 @@ from example_interfaces.srv import AddTwoInts
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask, PerformInParallel, Wait
 from task_manager_msgs.msg import ActiveTaskArray
-from task_manager_msgs.srv import CancelTasks, StopTasks
+from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
@@ -105,11 +105,13 @@ class TaskManagerTestNode(unittest.TestCase):
             ActiveTaskArray, "/task_manager/active_tasks", self._active_tasks_cb, qos_profile=qos_profile
         )
         self._tasks_started = []
+        self._task_statuses = {}
 
     def _active_tasks_cb(self, active_tasks_msg) -> None:
         for active_task in active_tasks_msg.active_tasks:
             if active_task.task_id not in self._tasks_started:
                 self._tasks_started.append(active_task.task_id)
+            self._task_statuses[active_task.task_id] = active_task.task_status
 
     def tearDown(self) -> None:
         self.task_manager_node.destroy_node()
@@ -129,6 +131,13 @@ class TaskManagerTestNode(unittest.TestCase):
         """Utility function to wait for the task to be started."""
         start = time.time()
         while task_id not in self._tasks_started:
+            assert time.time() - start < timeout
+            time.sleep(0.01)
+
+    def wait_for_task_status(self, task_id: str, status: str, timeout: float = 5.0) -> None:
+        """Utility function to wait until the active tasks topic reports the given task with the given status."""
+        start = time.time()
+        while self._task_statuses.get(task_id) != status:
             assert time.time() - start < timeout
             time.sleep(0.01)
 
@@ -173,6 +182,24 @@ class TaskManagerTestNode(unittest.TestCase):
         cancel_goal.cancelled_tasks = task_ids
         task_data = json.dumps(extract_values(cancel_goal))
         goal = ExecuteTask.Goal(task_name="system/cancel_task", task_data=task_data, source="")
+        goal_handle = self._start_task(goal=goal)
+        return goal_handle.get_result()
+
+    def execute_pause_task(self, task_ids: List[str]) -> ExecuteTask.Result:
+        """Calls system/pause_task with given task IDs."""
+        pause_goal = PauseTasks.Request()
+        pause_goal.paused_tasks = task_ids
+        task_data = json.dumps(extract_values(pause_goal))
+        goal = ExecuteTask.Goal(task_name="system/pause_task", task_data=task_data, source="")
+        goal_handle = self._start_task(goal=goal)
+        return goal_handle.get_result()
+
+    def execute_resume_task(self, task_ids: List[str]) -> ExecuteTask.Result:
+        """Calls system/resume_task with given task IDs."""
+        resume_goal = ResumeTasks.Request()
+        resume_goal.resumed_tasks = task_ids
+        task_data = json.dumps(extract_values(resume_goal))
+        goal = ExecuteTask.Goal(task_name="system/resume_task", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 

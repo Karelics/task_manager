@@ -17,6 +17,9 @@
 import threading
 from typing import Callable, Dict, List, Optional
 
+# Task Manager messages
+from task_manager_msgs.msg import TaskStatus
+
 # Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_details import TaskDetails
@@ -79,6 +82,23 @@ class ActiveTasks:
                 task_clients.append(task_client)
         return task_clients
 
+    def get_task_client(self, task_id: str) -> TaskClient:
+        """Returns the TaskClient for the given task_id.
+
+        :raises KeyError: if a task with the given id was not found.
+        """
+        with self._active_tasks_lock:
+            return self._active_tasks[task_id]
+
+    def publish_active_tasks(self) -> None:
+        """Re-publishes the current active tasks list.
+
+        Useful after mutating a task_client's status directly, e.g. reflecting a Mission's own status change alongside
+        the subtask it delegated a pause/resume to.
+        """
+        with self._active_tasks_lock:
+            self._active_tasks_changed()
+
     def get_active_tasks_by_name(self, task_name: str) -> List[TaskClient]:
         """Return all the task clients that exist with a given name.
 
@@ -93,13 +113,16 @@ class ActiveTasks:
         return task_clients
 
     def get_blocking_task(self) -> Optional[TaskClient]:
-        """Gets the active blocking task client."""
+        """Gets the active blocking task client.
+
+        Paused tasks are excluded, so a new blocking task is free to start while another one sits paused.
+        """
         found_blocking_tasks = 0
         blocking_task = None
 
         with self._active_tasks_lock:
             for task_client in self._active_tasks.values():
-                if task_client.task_specs.blocking:
+                if task_client.task_specs.blocking and task_client.task_details.status != TaskStatus.PAUSED:
                     found_blocking_tasks += 1
                     blocking_task = task_client
 
@@ -130,8 +153,46 @@ class ActiveTasks:
         :raises KeyError: if a task with the given id was not found.
         :raises CancelTaskFailedError: if canceling of the task fails.
         """
-        task_client = self._active_tasks[task_id]
+        task_client = self.get_task_client(task_id)
         task_client.cancel_task()
+
+    def pause_task(self, task_id: str, publish: bool = True) -> None:
+        """Pauses the active task based on task ID.
+
+        :param task_id: ID of the task to pause
+        :param publish: If False, skip republishing after pausing - use when the caller has more related changes
+            to make (e.g. mirroring the status onto an owning Mission) and will publish once itself afterward.
+        :raises KeyError: if a task with the given id was not found.
+        :raises PauseTaskFailedError: if pausing of the task fails.
+        """
+        task_client = self.get_task_client(task_id)
+        task_client.pause_task()
+        if publish:
+            self.publish_active_tasks()  # Republish so the PAUSED status is visible on the active tasks topic
+
+    def resume_task(self, task_id: str, publish: bool = True) -> None:
+        """Resumes a previously paused task based on task ID.
+
+        :param task_id: ID of the task to resume
+        :param publish: If False, skip republishing after resuming - use when the caller has more related changes
+            to make (e.g. mirroring the status onto an owning Mission) and will publish once itself afterward.
+        :raises KeyError: if a task with the given id was not found.
+        :raises ResumeTaskFailedError: if resuming of the task fails.
+        """
+        task_client = self.get_task_client(task_id)
+
+        # Check and cancel blocking task if needed
+        current_blocking_task = self.get_blocking_task()
+        if (
+            current_blocking_task
+            and current_blocking_task.task_details.task_id != task_id
+            and task_client.task_specs.blocking
+        ):
+            self.cancel_task(current_blocking_task.task_details.task_id)
+
+        task_client.resume_task()
+        if publish:
+            self.publish_active_tasks()  # Republish so the IN_PROGRESS status is visible on the active tasks topic
 
     def _active_tasks_changed(self) -> None:
         if self._active_tasks_changed_cb is not None:

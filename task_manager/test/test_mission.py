@@ -53,30 +53,96 @@ class MissionUnittest(unittest.TestCase):
                 SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.DONE, task_id="111")
             ]
 
-            result = self.mission.execute_cb(goal_handle=Mock(request=request))
+            result = self.mission.execute_cb(
+                goal_handle=Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+            )
             self.assertEqual(result, expected_result)
 
         with self.subTest("Successful flow with randomly generated task ID"):
             request.subtasks[0].task_id = ""
-            result = self.mission.execute_cb(goal_handle=Mock(request=request))
+            result = self.mission.execute_cb(
+                goal_handle=Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+            )
             self.assertEqual(result.mission_results[0].task_id, "123")
+
+    def test_get_active_children_tracks_progress_and_clears_after(self):
+        """The mission tracks the task_id of whichever subtask is currently running, so that pausing/resuming the
+        mission can be redirected to it.
+
+        The tracking is cleared once the mission finishes.
+        """
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a"),
+                SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b"),
+            ]
+        )
+        goal_id = bytes([0] * 16)
+        seen_subtask_ids = []
+
+        def fake_execute_task_cb(_goal, _goal_handle):
+            seen_subtask_ids.append(self.mission.get_active_children(goal_id))
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = fake_execute_task_cb
+
+        self.assertEqual(self.mission.get_active_children(goal_id), [])
+        self.mission.execute_cb(
+            goal_handle=Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+        )
+
+        self.assertEqual(seen_subtask_ids, [["a"], ["b"]])
+        self.assertEqual(self.mission.get_active_children(goal_id), [])
+
+    def test_get_active_children_is_independent_per_mission_invocation(self):
+        """Two concurrently running missions (distinct goal_ids) must not clobber each other's tracked subtask."""
+        goal_id_a = bytes([1] * 16)
+        goal_id_b = bytes([2] * 16)
+        request_a = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a")])
+        request_b = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b")])
+
+        def fake_execute_task_cb(goal, _goal_handle):
+            if goal.task_id == "a":
+                # Simulate mission B running concurrently while mission A is still mid-flight
+                self.mission.execute_cb(
+                    goal_handle=Mock(request=request_b, goal_id=Mock(uuid=list(goal_id_b)), is_cancel_requested=False)
+                )
+                self.assertEqual(self.mission.get_active_children(goal_id_a), ["a"])
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = fake_execute_task_cb
+        self.mission.execute_cb(
+            goal_handle=Mock(request=request_a, goal_id=Mock(uuid=list(goal_id_a)), is_cancel_requested=False)
+        )
+
+        self.assertEqual(self.mission.get_active_children(goal_id_a), [])
+        self.assertEqual(self.mission.get_active_children(goal_id_b), [])
 
     def test_mission_not_successful(self):
         """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
         Mission is cancelled."""
         request = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="test/mock_subtask", task_data="{}")])
-        mock_goal_handle = Mock(request=request)
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        def cancel_requested_while_running(status):
+            # A cancel arrives while the subtask is running (not before it started) - Mission.execute_cb() must
+            # still dispatch the subtask, and only decide cancel-vs-abort once its result comes back.
+            def _side_effect(_goal, _goal_handle):
+                mock_goal_handle.is_cancel_requested = True
+                return ExecuteTask.Result(task_status=status, task_result="{}")
+
+            return _side_effect
 
         with self.subTest("canceled"):
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
-                task_status=TaskStatus.CANCELED, task_result="{}"
-            )
+            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.CANCELED)
             result = self.mission.execute_cb(goal_handle=mock_goal_handle)
             mock_goal_handle.canceled.assert_called_once()
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
 
         mock_goal_handle.reset_mock()
+        mock_goal_handle.is_cancel_requested = False
         with self.subTest("error"):
+            self.mission.execute_task_cb.side_effect = None
             self.mission.execute_task_cb.return_value = ExecuteTask.Result(
                 task_status=TaskStatus.ERROR, task_result="{}"
             )
@@ -89,22 +155,27 @@ class MissionUnittest(unittest.TestCase):
         request = MissionAction.Goal(
             subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}")]
         )
-        mock_goal_handle = Mock(request=request)
-        mock_goal_handle.is_cancel_requested = True
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        def cancel_requested_while_running(status):
+            # A cancel arrives while the subtask is running (not before it started) - allow_skipping must not
+            # save it once the mission itself is being cancelled.
+            def _side_effect(_goal, _goal_handle):
+                mock_goal_handle.is_cancel_requested = True
+                return ExecuteTask.Result(task_status=status, task_result="{}")
+
+            return _side_effect
 
         with self.subTest("mission_canceled"):
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
-                task_status=TaskStatus.CANCELED, task_result="{}"
-            )
+            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.CANCELED)
             result = self.mission.execute_cb(goal_handle=mock_goal_handle)
             mock_goal_handle.canceled.assert_called_once()
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
 
         mock_goal_handle.reset_mock()
+        mock_goal_handle.is_cancel_requested = False
         with self.subTest("mission_error"):
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
-                task_status=TaskStatus.ERROR, task_result="{}"
-            )
+            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.ERROR)
             result = self.mission.execute_cb(goal_handle=mock_goal_handle)
             mock_goal_handle.abort.assert_called_once()
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
@@ -122,7 +193,7 @@ class MissionUnittest(unittest.TestCase):
         expected_result.mission_results = [
             SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.ERROR, skipped=True, task_id="123")
         ]
-        mock_goal_handle = Mock(request=request)
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
         mock_goal_handle.is_cancel_requested = False
         result = self.mission.execute_cb(goal_handle=mock_goal_handle)
         self.assertEqual(result, expected_result)

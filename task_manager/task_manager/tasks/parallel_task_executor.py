@@ -16,7 +16,7 @@
 import time
 import uuid
 from threading import Lock
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # ROS
 import rclpy
@@ -31,12 +31,12 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.parallel_task import ParallelTask
-from task_manager.tasks.system_tasks import SystemTask
+from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
 
 
 # This class wraps an action server which is to be only interfaced via ROS actions.
 # pylint: disable=too-few-public-methods
-class ParallelTaskExecutor(SystemTask):
+class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
     """This task executes a list of tasks in parallel."""
 
     def __init__(
@@ -70,6 +70,16 @@ class ParallelTaskExecutor(SystemTask):
         self._prepare_execute_task_result_cb = prepare_execute_task_result_cb
         self._start_single_task_cb = start_single_task_cb
 
+        # ROS action goal_id (as bytes) of each running ParallelTask -> task_id of its currently running subtasks.
+        self._goal_id_to_subtask_ids: Dict[bytes, List[ParallelTask]] = {}
+
+    def get_active_children(self, goal_id: bytes) -> List[str]:
+        """Returns the active children of the parallel task i.e. the tasks that have not yet finished running.
+
+        Returns an empty list if the goal id is not known or none of tasks are still live.
+        """
+        return [task.task_id for task in self._goal_id_to_subtask_ids.get(goal_id, []) if task.active]
+
     def _execute_cb(self, goal_handle: ServerGoalHandle) -> PerformInParallel.Result:
         """Wraps the perform_in_parallel_cb method to acquire a lock before executing the parallel tasks."""
         with self._execution_lock:
@@ -88,6 +98,11 @@ class ParallelTaskExecutor(SystemTask):
 
         subtasks: List[ParallelTask] = []
         message = ""
+        goal_id = bytes(goal_handle.goal_id.uuid)
+        # Registered upfront (before any subtask has actually started) with the same list reference that
+        # _gather_and_try_to_run_subtasks appends to, so a pause/resume request racing the startup window still
+        # sees whichever subtasks have started so far.
+        self._goal_id_to_subtask_ids[goal_id] = subtasks
         try:
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)
             self._wait_actions_done(goal_handle, subtasks)
@@ -99,6 +114,9 @@ class ParallelTaskExecutor(SystemTask):
         except PreemptedException:
             self._logger.info("Parallel task was preempted by a new goal")
             message = "Parallel task was preempted by a new goal"
+
+        finally:
+            self._goal_id_to_subtask_ids.pop(goal_id, None)
 
         if not rclpy.ok():
             self._logger.error("Parallel execution task failed due to rclpy not being ok.")
@@ -164,7 +182,9 @@ class ParallelTaskExecutor(SystemTask):
                 raise PreemptedException("Parallel task was preempted")
 
             for action in subtasks:
-                if not action.active:
+                # `has_finished()` is the real completion signal - a paused subtask is neither
+                # active nor finished, and must not tear the group down.
+                if action.has_finished():
                     self._logger.info(f"Action '{action.name}' finished. The whole parallel action will be cancelled")
                     return
 

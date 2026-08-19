@@ -22,8 +22,9 @@ Task Manager is your solution!
 4. [Missions](#missions)
 4. [Parallel Tasks](#parallel-tasks)
 5. [Task Cancelling](#task-cancelling)
-6. [Global STOP-task](#stop)
-7. [Wait task](#wait)
+6. [Task Pausing](#task-pausing)
+7. [Global STOP-task](#stop)
+8. [Wait task](#wait)
 
 
 ### Tasks <a name="tasks"></a>
@@ -98,6 +99,11 @@ Tasks can be cancelled by calling a `system/cancel_tasks` task with the Task IDs
 
 Tasks that are implemented using ROS Services cannot be cancelled due to their nature. Trying to cancel such a task will make Task Manager wait for a predefined time for the task to finish and return an `ERROR` status if it doesn't.
 
+### Task Pausing <a name="task-pausing"></a>
+Tasks can be paused and resumed by calling `system/pause_task` / `system/resume_task` with the Task IDs. A paused task gets the status `PAUSED`, stays visible in `/task_manager/active_tasks`, and is excluded from the blocking-task check — so a new blocking task can start while another one sits paused.
+
+Since ROS 2 actions have no native pause mechanism, pausing an action-backed task actually cancels its underlying goal right now, remembering the original goal data. Resuming re-sends that same goal as a brand-new one, i.e. execution restarts from scratch rather than continuing where it left off. The partial result the action server returns with each pause-cancel is kept: fields listed in the task's `result_concat_fields` parameter are concatenated across all paused segments into the task's final result, while unlisted fields keep only the final segment's value. ROS Services cannot be cancelled mid-flight, so pausing one instead waits out the task's `cancel_timeout` for the call to finish naturally: if it finishes within that grace period the pause is reported as successful (even though the task actually ended up `DONE` rather than `PAUSED`), and only a call that outlives the grace period is reported as a failed pause.
+
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
 
@@ -140,6 +146,8 @@ The following tasks are available by default from the Task Manager
 |--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
 | system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
+| system/pause_task  | Pauses the given tasks by Task ID.                                                                            | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
+| system/resume_task | Resumes the given previously paused tasks by Task ID.                                                         | [ResumeTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/ResumeTasks.srv) |
 | system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`.                              | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
 | system/wait | A blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`). | [Wait](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Wait.action)
 
@@ -156,6 +164,7 @@ The following tasks are available by default from the Task Manager
 | \<task>.reentrant             | bool     | False   | Allows executing multiple goals for the same task in parallel. Note that the service or action implementing the task logic should also use a reentrant callback group for enabling of this option to make sense.                                                                                                                                                                                                                  |
 | \<task>.service_success_field | string   | ""      | A usual way for ROS services is to provide their successful execution status for example with the "success" field in the response message. Specify here the name of this field if you wish your task to automatically set its status to ERROR when this field value is `False`. If left empty, the task will always finish with DONE status. <br/><br/> Note: Works only for the tasks that implement their logic with a service. |
 | \<task>.cancel_timeout        | float    | 5.0     | Time, in seconds, to wait when cancelling an ongoing task. If the time is exceeded before the cancelling is done, the task will fail.                                                                                                                                                                                                                                                                                             |
+| \<task>.result_concat_fields  | string[] | []      | Action result fields (sequences or strings) whose partial values, returned by the server each time the task is paused, are concatenated in chronological order into the task's final result. Fields not listed keep only the value from the final (post-resume) goal. <br/><br/> Note: Works only for the tasks that implement their logic with an action, and requires the action server to fill in its partial result when its goal is cancelled. |
 | enable_task_servers           | bool     | False   | Creates new service and action topics for all the declared tasks under `/task_manager/task/<task_name>` topic, to allow easy task calling from the CLI using the ROS message interfaces instead of JSON format. Should be used for debugging and development purposes only, since the preferred task starting method through `/task_manager/execute_task` action topic allows user to also set Task ID and source.                |
 The parameters that have their default as "-" are mandatory.
 

@@ -1,0 +1,4 @@
+string[] paused_tasks               # Task IDs of the active tasks to be paused
+---
+bool success                        # Success if all the pauses pass
+string[] successful_pauses          # List of successfully paused tasks
