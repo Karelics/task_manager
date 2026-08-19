@@ -40,6 +40,7 @@ MISSION = "system/mission"
 PARALLEL = "system/perform_in_parallel"
 
 
+# pylint: disable=duplicate-code
 def make_task_client(task_id: str, task_name: str, status: str = TaskStatus.IN_PROGRESS, spec=TaskClient):
     """Builds a Mock TaskClient with real TaskSpecs/TaskDetails, following the pattern used in test_active_tasks.py."""
     client = Mock(spec=spec)
@@ -53,6 +54,9 @@ def make_task_client(task_id: str, task_name: str, status: str = TaskStatus.IN_P
     )
     client.task_details = TaskDetails(task_id=task_id, source="TEST", status=status)
     return client
+
+
+# pylint: enable=duplicate-code
 
 
 def make_composite_client(task_id: str, task_name: str, goal_id_byte: int, status: str = TaskStatus.IN_PROGRESS):

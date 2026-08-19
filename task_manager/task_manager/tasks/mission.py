@@ -29,10 +29,10 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.system_tasks import ActiveChildrenTracker
+from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
 
 
-class Mission(ActiveChildrenTracker):
+class Mission(SystemTask, ActiveChildrenTracker):
     """Implements the Mission task, which is able to compose multiple existing tasks."""
 
     def __init__(

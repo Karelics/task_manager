@@ -622,6 +622,10 @@ class ServiceTaskClient(TaskClient):
             f"Waiting for {self._task_specs.cancel_timeout} seconds for the task to finish on its own."
         )
         if not self._goal_done.wait(self._task_specs.cancel_timeout):
+            self._node.get_logger().error(
+                f"Service call to {self._task_specs.topic} is still running after "
+                f"{self._task_specs.cancel_timeout} seconds, cannot pause the task."
+            )
             raise PauseTaskFailedError(f"Service call to {self._task_specs.topic} cannot be paused.")
 
     def resume_task(self) -> None:

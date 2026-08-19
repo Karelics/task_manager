@@ -144,10 +144,10 @@ def _pause_or_resume_group(
     task_id: str,
     active_tasks: ActiveTasks,
     composites: Dict[str, "ActiveChildrenTracker"],
-    from_statuses: Tuple[TaskStatus, ...],
-    func_to_call: Callable[[str], bool],
+    start_statuses: Tuple[TaskStatus, ...],
+    callback: Callable[[str], bool],
 ) -> bool:
-    """Run function 'func_to_call' on every task which is linked to the task with given 'task_id'.
+    """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
     Finds task ids of all related tasks, eg. if the given task is part of a mission, all the mission
     tasks will be listed and then the given function will be performed for all of the tasks, unless
@@ -157,9 +157,9 @@ def _pause_or_resume_group(
     :param task_id: the task_id of task we want to operate on.
     :param active_tasks: the ActiveTasks instance to operate on.
     :param composites: Dict of available composite task names.
-    :param from_statuses: the set of statuses that a member must be in to be attempted for transition.
+    :param start_statuses: the set of statuses that a member must be in to be attempted for transition.
         Members already in the target state and members that have finished on their own are skipped.
-    :param func_to_call: the function to call for each task. Should return True
+    :param callback: the function to call for each task. Should return True
         if the transition succeeded, False if it failed.
     :raises KeyError: if task_id is not an active task.
     :return: True if everything succeeded.
@@ -168,9 +168,9 @@ def _pause_or_resume_group(
 
     success = True
     for member_id in target_ids:
-        if active_tasks.get_task_client(member_id).task_details.status not in from_statuses:
+        if active_tasks.get_task_client(member_id).task_details.status not in start_statuses:
             continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
-        if not func_to_call(member_id):
+        if not callback(member_id):
             success = False
 
     _sync_composite_statuses(active_tasks, composites)

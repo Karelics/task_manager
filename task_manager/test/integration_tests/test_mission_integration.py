@@ -166,6 +166,59 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.DONE)
         self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
 
+    def test_pause_and_resume_mission_with_many_subtasks(self):
+        """Make sure that the mission continues the execution from the correct step.
+
+        Let's the first task to succeed, then pauses the mission but since the second task is a service task, it will
+        complete and the mission will continue from the third task.
+        """
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="123"),
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="456"),
+                # SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 1}', task_id="456"),
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="789"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        mission_goal_handle = self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("456")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        self.execute_pause_task([mission_id])
+        self.wait_for_task_status("456", TaskStatus.PAUSED)
+        # self.wait_for_task_status("456", TaskStatus.DONE)  # The service task will complete when paused
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+
+        # Resuming any task related to the mission should resume the whole mission
+        resume_response = self.execute_resume_task([mission_id])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": [mission_id]})
+        )
+
+        self.wait_for_task_status("789", TaskStatus.IN_PROGRESS)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+
+        mission_response = mission_goal_handle.get_result()
+        mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
+
+        self.assertEqual(mission_response.status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[2].task_status, TaskStatus.DONE)
+
     def test_pause_subtask_of_parallel_task_running_inside_mission(self):
         """Pausing one of the two subtasks of a ParallelTaskExecutor that itself runs as a Mission subtask pauses every
         member of that parallel group, and the status sync now bridges all the way up through the nesting:

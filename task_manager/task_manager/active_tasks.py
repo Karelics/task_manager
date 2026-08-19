@@ -87,7 +87,8 @@ class ActiveTasks:
 
         :raises KeyError: if a task with the given id was not found.
         """
-        return self._active_tasks[task_id]
+        with self._active_tasks_lock:
+            return self._active_tasks[task_id]
 
     def publish_active_tasks(self) -> None:
         """Re-publishes the current active tasks list.
