@@ -14,6 +14,7 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
+import threading
 import uuid
 from typing import Callable, Dict, List
 
@@ -49,6 +50,9 @@ class Mission(SystemTask, ActiveChildrenTracker):
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
         self._goal_id_to_subtask_id: Dict[bytes, str] = {}
+        # ROS action goal_id (as bytes) of each running mission -> Event; set = running, cleared = paused
+        # between subtasks. See request_pause()/request_resume()/is_paused().
+        self._resume_events: Dict[bytes, threading.Event] = {}
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -63,6 +67,50 @@ class Mission(SystemTask, ActiveChildrenTracker):
         mission subtask isn't running (or isn't known)."""
         current = self._goal_id_to_subtask_id.get(goal_id)
         return [current] if current is not None else []
+
+    def request_pause(self, goal_id: bytes) -> bool:
+        """Arms the paused-between-subtasks flag for this mission invocation, so execute_cb's loop holds before
+        dispatching its next subtask once the current one finishes, regardless of whether that subtask itself could
+        actually be paused (e.g. a service-backed subtask that can only run to completion).
+
+        :return: False (no-op) if goal_id isn't a currently running mission invocation.
+        """
+        event = self._resume_events.get(goal_id)
+        if event is None:
+            return False
+        event.clear()
+        return True
+
+    def request_resume(self, goal_id: bytes) -> bool:
+        """Reverses request_pause() - lets execute_cb's loop proceed to the next subtask again.
+
+        :return: False (no-op) if goal_id isn't a currently running mission invocation.
+        """
+        event = self._resume_events.get(goal_id)
+        if event is None:
+            return False
+        event.set()
+        return True
+
+    def is_paused(self, goal_id: bytes) -> bool:
+        """True while this mission invocation is sitting paused between subtasks."""
+        event = self._resume_events.get(goal_id)
+        return event is not None and not event.is_set()
+
+    def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
+        """Blocks execute_cb's loop between subtasks while this invocation is paused (request_pause() called and
+        request_resume() not yet), polling for either a resume or a genuine cancel of the mission's own action.
+
+        goal (never true for a pause, which is always redirected to the current subtask instead - see
+        ActiveChildrenTracker).
+
+        :return: True once clear to dispatch the next subtask, False if cancelled while paused.
+        """
+        resume_event = self._resume_events[goal_id]
+        while not resume_event.wait(timeout=1 / 50):
+            if goal_handle.is_cancel_requested:
+                return False
+        return True
 
     def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
         """Execution callback of the Mission Action Server, that executes subtasks one by one."""
@@ -82,6 +130,8 @@ class Mission(SystemTask, ActiveChildrenTracker):
             )
 
         goal_id = bytes(goal_handle.goal_id.uuid)
+        self._resume_events[goal_id] = threading.Event()
+        self._resume_events[goal_id].set()
         try:
             for subtask, mission_result in zip(request.subtasks, result.mission_results):
                 if goal_handle.is_cancel_requested:
@@ -112,10 +162,15 @@ class Mission(SystemTask, ActiveChildrenTracker):
                         goal_handle.abort()
                     return result
 
+                if not self._wait_until_resumed(goal_id, goal_handle):
+                    goal_handle.canceled()
+                    return result
+
             goal_handle.succeed()
             return result
         finally:
             self._goal_id_to_subtask_id.pop(goal_id, None)
+            self._resume_events.pop(goal_id, None)
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:

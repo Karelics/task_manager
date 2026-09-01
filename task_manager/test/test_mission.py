@@ -14,6 +14,8 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
+import threading
+import time
 import unittest
 from unittest import mock
 from unittest.mock import Mock, patch
@@ -117,6 +119,94 @@ class MissionUnittest(unittest.TestCase):
 
         self.assertEqual(self.mission.get_active_children(goal_id_a), [])
         self.assertEqual(self.mission.get_active_children(goal_id_b), [])
+
+    def test_request_pause_resume_is_paused_unknown_goal_id_are_no_ops(self):
+        """request_pause/request_resume return False, and is_paused returns False, for a goal_id that isn't a currently
+        running mission invocation."""
+        unknown_goal_id = bytes([9] * 16)
+        self.assertFalse(self.mission.request_pause(unknown_goal_id))
+        self.assertFalse(self.mission.request_resume(unknown_goal_id))
+        self.assertFalse(self.mission.is_paused(unknown_goal_id))
+
+    @staticmethod
+    def _wait_until(predicate, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return predicate()
+
+    def test_boundary_pause_holds_the_next_subtask_until_resumed(self):
+        """Pausing the mission while its current subtask is finishing (e.g. a service-backed one that can't.
+
+        actually be paused) must hold execute_cb before it dispatches the next subtask, until resumed - this is
+        the fix for pausing a mission across a service-backed subtask.
+        """
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a"),
+                SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b"),
+            ]
+        )
+        goal_id = bytes([0] * 16)
+        dispatched = []
+
+        def fake_execute_task_cb(goal, _goal_handle):
+            dispatched.append(goal.task_id)
+            if goal.task_id == "a":
+                self.mission.request_pause(goal_id)
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = fake_execute_task_cb
+        goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
+        thread.start()
+        try:
+            self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
+            self.assertEqual(dispatched, ["a"])
+
+            self.mission.request_resume(goal_id)
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(dispatched, ["a", "b"])
+            goal_handle.succeed.assert_called_once()
+        finally:
+            thread.join(timeout=2)
+
+    def test_boundary_pause_can_still_be_cancelled(self):
+        """A genuine cancel of the mission's own goal while it's paused between subtasks ends the mission instead of
+        leaving it stuck forever."""
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a"),
+                SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b"),
+            ]
+        )
+        goal_id = bytes([0] * 16)
+        dispatched = []
+
+        def fake_execute_task_cb(goal, _goal_handle):
+            dispatched.append(goal.task_id)
+            if goal.task_id == "a":
+                self.mission.request_pause(goal_id)
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = fake_execute_task_cb
+        goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
+        thread.start()
+        try:
+            self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
+            goal_handle.is_cancel_requested = True
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            goal_handle.canceled.assert_called_once()
+            self.assertEqual(dispatched, ["a"])
+        finally:
+            thread.join(timeout=2)
 
     def test_mission_not_successful(self):
         """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
