@@ -346,6 +346,7 @@ class ResolveStartIdTests(unittest.TestCase):
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_resolve_start_id_returns_enclosing_composite_for_a_tracked_child(self):
+        """Tests that _resolve_start_id returns the enclosing composite's task_id for currently tracked child."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
@@ -353,6 +354,7 @@ class ResolveStartIdTests(unittest.TestCase):
         self.assertEqual(_resolve_start_id("leaf1", self.active_tasks, self.composites), "m1")
 
     def test_resolve_start_id_returns_task_id_itself_when_untracked(self):
+        """Tests that _resolve_start_id returns the task_id itself when it is not a tracked child of any composite."""
         self.active_tasks.add(make_task_client("other", "some_task"))
         self.assertEqual(_resolve_start_id("other", self.active_tasks, self.composites), "other")
 

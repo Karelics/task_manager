@@ -177,14 +177,14 @@ def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "A
             break
 
 
-def pause_or_resume_group(
+def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     task_id: str,
     active_tasks: ActiveTasks,
     composites: Dict[str, "ActiveChildrenTracker"],
     start_statuses: Tuple[TaskStatus, ...],
     callback: Callable[[str], bool],
     pause: bool,
-) -> bool:  # pylint: disable=too-many-arguments, too-many-positional-arguments
+) -> bool:
     """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
     Finds task ids of all related tasks, eg. if the given task is part of a mission, all the mission
