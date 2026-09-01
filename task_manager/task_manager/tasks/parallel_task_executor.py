@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 import time
 import uuid
-from threading import Event, Lock
+from threading import Lock
 from typing import Callable, Dict, List, Optional, Tuple
 
 # ROS
@@ -30,8 +30,9 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 # Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
+from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
 from task_manager.tasks.parallel_task import ParallelTask
-from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
+from task_manager.tasks.system_tasks import SystemTask
 
 
 # This class wraps an action server which is to be only interfaced via ROS actions.
@@ -52,6 +53,7 @@ class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
         :param prepare_execute_task_result_cb: Callback to prepare the ExecuteTask.Result message with the task_id
         :param start_single_task_cb: Callback to start a single task and return the TaskClient and an error code
         """
+        super().__init__()
         self._node = node
         self._logger = node.get_logger().get_child("ParallelTask")
         self._parallel_executor_server = ActionServer(
@@ -72,9 +74,6 @@ class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
 
         # ROS action goal_id (as bytes) of each running ParallelTask -> task_id of its currently running subtasks.
         self._goal_id_to_subtask_ids: Dict[bytes, List[ParallelTask]] = {}
-        # ROS action goal_id (as bytes) of each running ParallelTask -> Event; set = running, cleared = paused.
-        # See request_pause()/request_resume()/is_paused().
-        self._resume_events: Dict[bytes, Event] = {}
 
     def get_active_children(self, goal_id: bytes) -> List[str]:
         """Returns the active children of the parallel task i.e. the tasks that have not yet finished running.
@@ -82,37 +81,6 @@ class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
         Returns an empty list if the goal id is not known or none of tasks are still live.
         """
         return [task.task_id for task in self._goal_id_to_subtask_ids.get(goal_id, []) if task.active]
-
-    def request_pause(self, goal_id: bytes) -> bool:
-        """Arms the pause flag for this parallel invocation, so _wait_actions_done stops treating a subtask.
-
-        reaching completion as a reason to tear down the whole group - needed because a service-backed subtask
-        that can't truly be paused will otherwise finish and prematurely cancel its siblings.
-
-        :return: False (no-op) if goal_id isn't a currently running parallel invocation.
-        """
-        event = self._resume_events.get(goal_id)
-        if event is None:
-            return False
-        event.clear()
-        return True
-
-    def request_resume(self, goal_id: bytes) -> bool:
-        """Reverses request_pause() - lets _wait_actions_done resume watching for real completions.
-
-        :return: False (no-op) if goal_id isn't a currently running parallel invocation.
-        """
-        event = self._resume_events.get(goal_id)
-        if event is None:
-            return False
-        event.set()
-        return True
-
-    def is_paused(self, goal_id: bytes) -> bool:
-        """True while this parallel invocation is paused - consulted generically by system_tasks.py's
-        _sync_composite_statuses, same as Mission."""
-        event = self._resume_events.get(goal_id)
-        return event is not None and not event.is_set()
 
     def _execute_cb(self, goal_handle: ServerGoalHandle) -> PerformInParallel.Result:
         """Wraps the perform_in_parallel_cb method to acquire a lock before executing the parallel tasks."""
@@ -137,8 +105,7 @@ class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
         # _gather_and_try_to_run_subtasks appends to, so a pause/resume request racing the startup window still
         # sees whichever subtasks have started so far.
         self._goal_id_to_subtask_ids[goal_id] = subtasks
-        self._resume_events[goal_id] = Event()
-        self._resume_events[goal_id].set()
+        self._start_pause_tracking(goal_id)
         try:
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)
             self._wait_actions_done(goal_handle, subtasks)
@@ -153,7 +120,7 @@ class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
 
         finally:
             self._goal_id_to_subtask_ids.pop(goal_id, None)
-            self._resume_events.pop(goal_id, None)
+            self._stop_pause_tracking(goal_id)
 
         if not rclpy.ok():
             self._logger.error("Parallel execution task failed due to rclpy not being ok.")

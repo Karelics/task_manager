@@ -25,16 +25,16 @@ from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import ActionTaskClient, TaskClient
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
-from task_manager.tasks.mission import Mission
-from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
-from task_manager.tasks.system_tasks import (
+from task_manager.tasks.composite_resolution import (
     _find_enclosing_composite,
-    _pause_or_resume_group,
-    _resolve_down,
     _resolve_start_id,
     _resolve_target_task_ids,
     _sync_composite_statuses,
+    pause_or_resume_group,
+    resolve_down,
 )
+from task_manager.tasks.mission import Mission
+from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 
 # pylint: disable=protected-access
 
@@ -70,7 +70,7 @@ def make_composite_client(task_id: str, task_name: str, goal_id_byte: int, statu
 
 
 class ResolveDownTests(unittest.TestCase):
-    """Unit tests for system_tasks._resolve_down."""
+    """Unit tests for composite_resolution.resolve_down."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -81,7 +81,7 @@ class ResolveDownTests(unittest.TestCase):
     def test_leaf_resolves_to_itself(self):
         """A plain task that isn't a composite resolves to itself."""
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
-        self.assertEqual(_resolve_down("leaf1", self.active_tasks, self.composites), ["leaf1"])
+        self.assertEqual(resolve_down("leaf1", self.active_tasks, self.composites), ["leaf1"])
 
     def test_mission_resolves_to_its_active_child(self):
         """A Mission resolves down to whichever of its subtasks is currently active."""
@@ -89,7 +89,7 @@ class ResolveDownTests(unittest.TestCase):
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
 
-        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
+        self.assertEqual(resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
 
     def test_parallel_resolves_to_all_its_active_children(self):
         """A ParallelTaskExecutor resolves down to all of its currently active members."""
@@ -100,7 +100,7 @@ class ResolveDownTests(unittest.TestCase):
             goal_id, []
         )
 
-        self.assertEqual(_resolve_down("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+        self.assertEqual(resolve_down("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
     def test_recurses_through_nested_composites_of_mixed_types(self):
         """A Mission's active child can itself be a parallel task (and vice versa) - resolution must follow the
@@ -114,7 +114,7 @@ class ResolveDownTests(unittest.TestCase):
             goal_id, []
         )
 
-        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
+        self.assertEqual(resolve_down("m1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
     def test_composite_with_no_active_children_resolves_to_itself(self):
         """If the composite hasn't recorded any active children yet (e.g. paused right as it starts), resolution falls
@@ -122,11 +122,11 @@ class ResolveDownTests(unittest.TestCase):
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.mission.get_active_children.return_value = []
 
-        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["m1"])
+        self.assertEqual(resolve_down("m1", self.active_tasks, self.composites), ["m1"])
 
     def test_unknown_task_id_raises_key_error(self):
         """If the task_id isn't in ActiveTasks, resolution fails with KeyError."""
-        self.assertRaises(KeyError, _resolve_down, "unknown", self.active_tasks, self.composites)
+        self.assertRaises(KeyError, resolve_down, "unknown", self.active_tasks, self.composites)
 
     def test_child_vanished_before_resolution_contributes_no_leaves(self):
         """A child listed as active by the composite's own bookkeeping but no longer in ActiveTasks (e.g. a service task
@@ -140,11 +140,11 @@ class ResolveDownTests(unittest.TestCase):
             goal_id, []
         )
 
-        self.assertEqual(_resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
+        self.assertEqual(resolve_down("m1", self.active_tasks, self.composites), ["leaf1"])
 
 
 class FindEnclosingCompositeTests(unittest.TestCase):
-    """Unit tests for system_tasks._find_enclosing_composite."""
+    """Unit tests for composite_resolution._find_enclosing_composite."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -182,8 +182,8 @@ class FindEnclosingCompositeTests(unittest.TestCase):
 
 
 class ResolveTargetTaskIdsTests(unittest.TestCase):
-    """Unit tests for system_tasks._resolve_target_task_ids - the combination of _find_enclosing_composite and
-    _resolve_down that PauseTasksService/ResumeTasksService actually use."""
+    """Unit tests for composite_resolution._resolve_target_task_ids - the combination of _find_enclosing_composite and
+    resolve_down that PauseTasksService/ResumeTasksService actually use."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -214,7 +214,7 @@ class ResolveTargetTaskIdsTests(unittest.TestCase):
 
 
 class SyncCompositeStatusesTests(unittest.TestCase):
-    """Unit tests for system_tasks._sync_composite_statuses."""
+    """Unit tests for composite_resolution._sync_composite_statuses."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -308,7 +308,7 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         """A composite's own paused flag being armed marks it PAUSED even while its active children are still
         IN_PROGRESS (e.g. the mission has already dispatched its next subtask's action call before pausing was.
 
-        requested for it - see _resolve_down's `arm` parameter and its ordering guarantee).
+        requested for it - see resolve_down's `paused_flag` parameter and its ordering guarantee).
         """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
@@ -337,7 +337,7 @@ class SyncCompositeStatusesTests(unittest.TestCase):
 
 
 class ResolveStartIdTests(unittest.TestCase):
-    """Unit tests for system_tasks._resolve_start_id."""
+    """Unit tests for composite_resolution._resolve_start_id."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -357,8 +357,8 @@ class ResolveStartIdTests(unittest.TestCase):
         self.assertEqual(_resolve_start_id("other", self.active_tasks, self.composites), "other")
 
 
-class ResolveDownArmTests(unittest.TestCase):
-    """Unit tests for system_tasks._resolve_down's `arm` parameter."""
+class ResolveDownPausedFlagTests(unittest.TestCase):
+    """Unit tests for composite_resolution.resolve_down's `paused_flag` parameter."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -366,37 +366,43 @@ class ResolveDownArmTests(unittest.TestCase):
         self.parallel = Mock(spec=ParallelTaskExecutor)
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
-    def test_arm_true_calls_request_pause_with_the_right_goal_id(self):
+    def test_paused_flag_true_calls_request_pause_with_the_right_goal_id(self):
+        """Tests that resolve_down calls request_pause on the composite with the correct goal_id when paused_flag is
+        True."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=7))
         self.mission.get_active_children.return_value = []
 
-        _resolve_down("m1", self.active_tasks, self.composites, arm=True)
+        resolve_down("m1", self.active_tasks, self.composites, paused_flag=True)
 
         self.mission.request_pause.assert_called_once_with(bytes([7] * 16))
         self.mission.request_resume.assert_not_called()
 
-    def test_arm_false_calls_request_resume_with_the_right_goal_id(self):
+    def test_paused_flag_false_calls_request_resume_with_the_right_goal_id(self):
+        """Tests that resolve_down calls request_resume on the composite with the correct goal_id when paused_flag is
+        False."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=7))
         self.mission.get_active_children.return_value = []
 
-        _resolve_down("m1", self.active_tasks, self.composites, arm=False)
+        resolve_down("m1", self.active_tasks, self.composites, paused_flag=False)
 
         self.mission.request_resume.assert_called_once_with(bytes([7] * 16))
         self.mission.request_pause.assert_not_called()
 
-    def test_arm_none_default_touches_no_paused_flags(self):
+    def test_paused_flag_none_default_touches_no_paused_flags(self):
+        """Tests that resolve_down does not touch any paused flags when paused_flag is None (the default)."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=7))
         self.mission.get_active_children.return_value = []
 
-        _resolve_down("m1", self.active_tasks, self.composites)
+        resolve_down("m1", self.active_tasks, self.composites)
 
         self.mission.request_pause.assert_not_called()
         self.mission.request_resume.assert_not_called()
 
-    def test_arm_is_a_no_op_for_a_plain_leaf(self):
+    def test_paused_flag_is_a_no_op_for_a_plain_leaf(self):
+        """Tests that resolve_down does not attempt to pause or resume composites when the task_id is a plain leaf."""
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
 
-        _resolve_down("leaf1", self.active_tasks, self.composites, arm=True)
+        resolve_down("leaf1", self.active_tasks, self.composites, paused_flag=True)
 
         self.mission.request_pause.assert_not_called()
         self.parallel.request_pause.assert_not_called()
@@ -415,14 +421,14 @@ class ResolveDownArmTests(unittest.TestCase):
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["p1"]}.get(goal_id, [])
         self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([2] * 16): ["leaf1"]}.get(goal_id, [])
 
-        _resolve_down("m1", self.active_tasks, self.composites, arm=True)
+        resolve_down("m1", self.active_tasks, self.composites, paused_flag=True)
 
         self.mission.request_pause.assert_called_once_with(bytes([1] * 16))
         self.parallel.request_pause.assert_called_once_with(bytes([2] * 16))
 
 
 class PauseOrResumeGroupTests(unittest.TestCase):
-    """Unit tests for system_tasks._pause_or_resume_group."""
+    """Unit tests for composite_resolution.pause_or_resume_group."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
@@ -438,7 +444,7 @@ class PauseOrResumeGroupTests(unittest.TestCase):
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["vanished"]}.get(goal_id, [])
 
-        success = _pause_or_resume_group(
+        success = pause_or_resume_group(
             "m1", self.active_tasks, self.composites, (TaskStatus.RECEIVED, TaskStatus.IN_PROGRESS), Mock(), pause=True
         )
 
@@ -446,11 +452,13 @@ class PauseOrResumeGroupTests(unittest.TestCase):
         self.assertTrue(success)
 
     def test_a_member_that_vanished_before_the_callback_runs_is_not_a_failure(self):
+        """Tests that pause_or_resume_group considers it a success even if a child has vanished before the callback
+        runs."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["vanished"]}.get(goal_id, [])
         callback = Mock()
 
-        success = _pause_or_resume_group(
+        success = pause_or_resume_group(
             "m1",
             self.active_tasks,
             self.composites,

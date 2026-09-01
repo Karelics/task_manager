@@ -132,8 +132,7 @@ def test_get_active_children_unknown_goal_id_returns_empty(parallel_task_executo
 def _register(parallel_task_executor: ParallelTaskExecutor, goal_id: bytes) -> None:
     """Registers a running invocation for goal_id, mirroring what perform_in_parallel_cb does at the start of a real
     goal, without needing to actually run one."""
-    parallel_task_executor._resume_events[goal_id] = threading.Event()
-    parallel_task_executor._resume_events[goal_id].set()
+    parallel_task_executor._start_pause_tracking(goal_id)
 
 
 def test_request_pause_and_resume_unknown_goal_id_are_no_ops(parallel_task_executor: ParallelTaskExecutor) -> None:
@@ -146,6 +145,7 @@ def test_request_pause_and_resume_unknown_goal_id_are_no_ops(parallel_task_execu
 
 
 def test_request_pause_resume_is_paused_state_transitions(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """Tests the state transitions of request_pause, request_resume, and is_paused for a registered goal_id."""
     goal_id = b"\x05" * 16
     _register(parallel_task_executor, goal_id)
     assert parallel_task_executor.is_paused(goal_id) is False

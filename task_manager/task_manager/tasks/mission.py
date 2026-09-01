@@ -14,7 +14,6 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
-import threading
 import uuid
 from typing import Callable, Dict, List
 
@@ -30,7 +29,8 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
+from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
+from task_manager.tasks.system_tasks import SystemTask
 
 
 class Mission(SystemTask, ActiveChildrenTracker):
@@ -47,12 +47,10 @@ class Mission(SystemTask, ActiveChildrenTracker):
         :param action_name: Action topic of the mission action server
         :param execute_task_cb: Callback to execute a single task
         """
+        super().__init__()
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
         self._goal_id_to_subtask_id: Dict[bytes, str] = {}
-        # ROS action goal_id (as bytes) of each running mission -> Event; set = running, cleared = paused
-        # between subtasks. See request_pause()/request_resume()/is_paused().
-        self._resume_events: Dict[bytes, threading.Event] = {}
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -67,35 +65,6 @@ class Mission(SystemTask, ActiveChildrenTracker):
         mission subtask isn't running (or isn't known)."""
         current = self._goal_id_to_subtask_id.get(goal_id)
         return [current] if current is not None else []
-
-    def request_pause(self, goal_id: bytes) -> bool:
-        """Arms the paused-between-subtasks flag for this mission invocation, so execute_cb's loop holds before
-        dispatching its next subtask once the current one finishes, regardless of whether that subtask itself could
-        actually be paused (e.g. a service-backed subtask that can only run to completion).
-
-        :return: False (no-op) if goal_id isn't a currently running mission invocation.
-        """
-        event = self._resume_events.get(goal_id)
-        if event is None:
-            return False
-        event.clear()
-        return True
-
-    def request_resume(self, goal_id: bytes) -> bool:
-        """Reverses request_pause() - lets execute_cb's loop proceed to the next subtask again.
-
-        :return: False (no-op) if goal_id isn't a currently running mission invocation.
-        """
-        event = self._resume_events.get(goal_id)
-        if event is None:
-            return False
-        event.set()
-        return True
-
-    def is_paused(self, goal_id: bytes) -> bool:
-        """True while this mission invocation is sitting paused between subtasks."""
-        event = self._resume_events.get(goal_id)
-        return event is not None and not event.is_set()
 
     def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
         """Blocks execute_cb's loop between subtasks while this invocation is paused (request_pause() called and
@@ -130,8 +99,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
             )
 
         goal_id = bytes(goal_handle.goal_id.uuid)
-        self._resume_events[goal_id] = threading.Event()
-        self._resume_events[goal_id].set()
+        self._start_pause_tracking(goal_id)
         try:
             for subtask, mission_result in zip(request.subtasks, result.mission_results):
                 if goal_handle.is_cancel_requested:
@@ -170,7 +138,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
             return result
         finally:
             self._goal_id_to_subtask_id.pop(goal_id, None)
-            self._resume_events.pop(goal_id, None)
+            self._stop_pause_tracking(goal_id)
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
