@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 import time
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Protocol, Tuple
+from typing import Dict, List
 
 # ROS
 import rclpy
@@ -33,148 +33,10 @@ from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTask
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
-from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError, TaskClient
+from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
-
-
-class ActiveChildrenTracker(Protocol):  # pylint: disable=too-few-public-methods
-    """Structural interface for composite tasks (Mission, ParallelTaskExecutor, ...) whose pause/resume must redirect to
-    whichever of their own children are currently active.
-
-    Duck-typed on purpose (no shared base class) so this module never needs to import Mission's or
-    ParallelTaskExecutor's concrete classes - the latter would create an import cycle, since it itself imports
-    SystemTask from this module.
-    """
-
-    def get_active_children(self, goal_id: bytes) -> List[str]:
-        """Returns the task_ids of this composite invocation's currently active (not yet finished) children."""
-
-
-def _composite_active_children(
-    task_client: TaskClient, composites: Dict[str, "ActiveChildrenTracker"]
-) -> Optional[List[str]]:
-    """If task_client is one of the registered composite task types, returns its currently active children's task_ids
-    (possibly empty).
-
-    None if it isn't a registered composite at all.
-    """
-    tracker = composites.get(task_client.task_specs.task_name)
-    if tracker is None:
-        return None
-    goal_id = task_client.goal_id  # Composites are always action-backed, so this is never None once started
-    if goal_id is None:
-        return []
-    return tracker.get_active_children(bytes(goal_id.uuid))
-
-
-def _resolve_down(task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]) -> List[str]:
-    """Expands task_id down to the leaf task(s) that should actually be paused/resumed.
-
-    A plain leaf resolves to itself. A composite (Mission, ParallelTaskExecutor, ...) resolves to its currently
-    active children, expanded recursively - so composites nested inside each other (e.g. a Mission subtask that
-    is itself a parallel task) are handled uniformly, regardless of depth or mix of composite types. A composite
-    with no active children yet (e.g. paused right as it starts, before it has recorded any) resolves to itself.
-
-    :raises KeyError: if task_id (or one it resolves through) is not an active task.
-    """
-    children = _composite_active_children(active_tasks.get_task_client(task_id), composites)
-    if not children:
-        return [task_id]
-    return [leaf for child in children for leaf in _resolve_down(child, active_tasks, composites)]
-
-
-def _find_enclosing_composite(
-    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]
-) -> Optional[str]:
-    """If task_id is currently a tracked active child of some other active composite task, returns that.
-
-    composite's own task_id - one hop up. None if task_id isn't a tracked child of anything right now.
-
-    This is what makes pausing/resuming one member of a group and pausing/resuming the group itself converge on
-    the same outcome: the request gets redirected to the parent first, then `_resolve_down` re-expands it back to
-    every one of its currently active children.
-    """
-    for task_name in composites:
-        for candidate in active_tasks.get_active_tasks_by_name(task_name):
-            if task_id in (_composite_active_children(candidate, composites)):
-                return candidate.task_details.task_id
-    return None
-
-
-def _resolve_target_task_ids(
-    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]
-) -> List[str]:
-    """Resolves a task_id given in a pause/resume request to the full set of leaf task_ids that must actually be
-    paused/resumed together.
-
-    :raises KeyError: if task_id (or one it resolves through) is not an active task.
-    """
-    enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
-    return _resolve_down(enclosing if enclosing is not None else task_id, active_tasks, composites)
-
-
-def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]) -> None:
-    """Re-derives every active composite task's own displayed status from its currently active children's statuses, at
-    any nesting depth: PAUSED once all of them are PAUSED, IN_PROGRESS as soon as none of them are.
-
-    Composites have no "real" paused state of their own to toggle - their own action call is just a Python loop
-    watching their children (cancelling/resuming it directly wouldn't make sense) - so their displayed status is
-    always just a reflection of what their children are doing. Runs repeated passes (bounded by the number of
-    composites) so a multi-level nesting chain settles regardless of scan order.
-    """
-    all_composites = [client for task_name in composites for client in active_tasks.get_active_tasks_by_name(task_name)]
-    for _ in range(len(all_composites) + 1):
-        changed = False
-        for client in all_composites:
-            children = _composite_active_children(client, composites)
-            if not children:
-                continue
-            child_statuses = {active_tasks.get_task_client(child).task_details.status for child in children}
-            if child_statuses == {TaskStatus.PAUSED} and client.task_details.status != TaskStatus.PAUSED:
-                client.task_details.status = TaskStatus.PAUSED
-                changed = True
-            elif TaskStatus.PAUSED not in child_statuses and client.task_details.status == TaskStatus.PAUSED:
-                client.task_details.status = TaskStatus.IN_PROGRESS
-                changed = True
-        if not changed:
-            break
-
-
-def _pause_or_resume_group(
-    task_id: str,
-    active_tasks: ActiveTasks,
-    composites: Dict[str, "ActiveChildrenTracker"],
-    start_statuses: Tuple[TaskStatus, ...],
-    callback: Callable[[str], bool],
-) -> bool:
-    """Run function 'callback' on every task which is linked to the task with given 'task_id'.
-
-    Finds task ids of all related tasks, eg. if the given task is part of a mission, all the mission
-    tasks will be listed and then the given function will be performed for all of the tasks, unless
-    the task has already finished or already in the target state.
-    Finally all of the related tasks should be in the same state.
-
-    :param task_id: the task_id of task we want to operate on.
-    :param active_tasks: the ActiveTasks instance to operate on.
-    :param composites: Dict of available composite task names.
-    :param start_statuses: the set of statuses that a member must be in to be attempted for transition.
-        Members already in the target state and members that have finished on their own are skipped.
-    :param callback: the function to call for each task. Should return True
-        if the transition succeeded, False if it failed.
-    :raises KeyError: if task_id is not an active task.
-    :return: True if everything succeeded.
-    """
-    target_ids = _resolve_target_task_ids(task_id, active_tasks, composites)
-
-    success = True
-    for member_id in target_ids:
-        if active_tasks.get_task_client(member_id).task_details.status not in start_statuses:
-            continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
-        if not callback(member_id):
-            success = False
-
-    _sync_composite_statuses(active_tasks, composites)
-    return success
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
+from task_manager.tasks.composite_resolution import pause_or_resume_group, resolve_down
 
 
 class SystemTask(ABC):  # pylint: disable=too-few-public-methods
@@ -234,7 +96,7 @@ class CancelTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic
@@ -249,7 +111,7 @@ class CancelTasksService(SystemTask):
         """Best-effort resolves task_id down to whichever leaf task(s) are actually running underneath it right now
         (e.g. a Mission's current subtask)."""
         try:
-            return _resolve_down(task_id, self._active_tasks, self._composites)
+            return resolve_down(task_id, self._active_tasks, self._composites)
         except KeyError:
             return [task_id]
 
@@ -306,7 +168,7 @@ class PauseTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic
@@ -331,12 +193,13 @@ class PauseTasksService(SystemTask):
         response.success = True
         for task_id in request.paused_tasks:
             try:
-                success = _pause_or_resume_group(
+                success = pause_or_resume_group(
                     task_id,
                     self._active_tasks,
                     self._composites,
                     (TaskStatus.RECEIVED, TaskStatus.IN_PROGRESS),
                     self._try_pause,
+                    pause=True,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
@@ -379,7 +242,7 @@ class ResumeTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic
@@ -404,8 +267,13 @@ class ResumeTasksService(SystemTask):
         response.success = True
         for task_id in request.resumed_tasks:
             try:
-                success = _pause_or_resume_group(
-                    task_id, self._active_tasks, self._composites, (TaskStatus.PAUSED,), self._try_resume
+                success = pause_or_resume_group(
+                    task_id,
+                    self._active_tasks,
+                    self._composites,
+                    (TaskStatus.PAUSED,),
+                    self._try_resume,
+                    pause=False,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to resume a task with ID {task_id}, but the task is not active.")

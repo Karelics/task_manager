@@ -14,6 +14,8 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
+import threading
+import time
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
@@ -125,3 +127,91 @@ def test_get_active_children_filters_out_finished_members(parallel_task_executor
 def test_get_active_children_unknown_goal_id_returns_empty(parallel_task_executor: ParallelTaskExecutor) -> None:
     """Test that get_active_children returns an empty list for an unknown goal_id."""
     assert parallel_task_executor.get_active_children(b"\x00" * 16) == []
+
+
+def _register(parallel_task_executor: ParallelTaskExecutor, goal_id: bytes) -> None:
+    """Registers a running invocation for goal_id, mirroring what perform_in_parallel_cb does at the start of a real
+    goal, without needing to actually run one."""
+    parallel_task_executor._start_pause_tracking(goal_id)
+
+
+def test_request_pause_and_resume_unknown_goal_id_are_no_ops(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """request_pause/request_resume return False, and is_paused returns False, for a goal_id that isn't a currently
+    running invocation."""
+    unknown_goal_id = b"\x09" * 16
+    assert parallel_task_executor.request_pause(unknown_goal_id) is False
+    assert parallel_task_executor.request_resume(unknown_goal_id) is False
+    assert parallel_task_executor.is_paused(unknown_goal_id) is False
+
+
+def test_request_pause_resume_is_paused_state_transitions(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """Tests the state transitions of request_pause, request_resume, and is_paused for a registered goal_id."""
+    goal_id = b"\x05" * 16
+    _register(parallel_task_executor, goal_id)
+    assert parallel_task_executor.is_paused(goal_id) is False
+
+    assert parallel_task_executor.request_pause(goal_id) is True
+    assert parallel_task_executor.is_paused(goal_id) is True
+
+    assert parallel_task_executor.request_resume(goal_id) is True
+    assert parallel_task_executor.is_paused(goal_id) is False
+
+
+def test_wait_actions_done_ignores_a_finished_member_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """A member reaching goal_done while the group is paused (e.g. a service-backed subtask that couldn't.
+
+    actually be paused and simply ran to completion) must not tear down the group - only once resumed does the
+    group notice it's done.
+    """
+    goal_id = b"\x03" * 16
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.is_active = True
+    goal_handle.goal_id.uuid = list(goal_id)
+
+    task = make_parallel_task(TaskStatus.DONE)
+    task._task_client.goal_done = True
+
+    parallel_task_executor._latest_goal_handle = goal_handle
+    _register(parallel_task_executor, goal_id)
+    parallel_task_executor.request_pause(goal_id)
+
+    thread = threading.Thread(target=parallel_task_executor._wait_actions_done, args=(goal_handle, [task]))
+    thread.start()
+    try:
+        time.sleep(0.3)
+        assert thread.is_alive()  # still waiting - the finished member must not have torn the group down
+
+        parallel_task_executor.request_resume(goal_id)
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+    finally:
+        goal_handle.is_active = False
+        thread.join(timeout=2)
+
+
+def test_wait_actions_done_cancel_still_ends_it_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
+    """A genuine cancel of the group's own goal must end _wait_actions_done immediately, regardless of whether the group
+    is currently paused."""
+    goal_id = b"\x04" * 16
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.is_active = True
+    goal_handle.goal_id.uuid = list(goal_id)
+
+    parallel_task_executor._latest_goal_handle = goal_handle
+    _register(parallel_task_executor, goal_id)
+    parallel_task_executor.request_pause(goal_id)
+
+    thread = threading.Thread(target=parallel_task_executor._wait_actions_done, args=(goal_handle, []))
+    thread.start()
+    try:
+        time.sleep(0.3)
+        assert thread.is_alive()
+
+        goal_handle.is_cancel_requested = True
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+    finally:
+        goal_handle.is_active = False
+        thread.join(timeout=2)

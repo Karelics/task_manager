@@ -29,10 +29,11 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
+from task_manager.tasks.system_tasks import SystemTask
 
 
-class Mission(SystemTask, ActiveChildrenTracker):
+class Mission(SystemTask, CompositePauseTracker):
     """Implements the Mission task, which is able to compose multiple existing tasks."""
 
     def __init__(
@@ -46,6 +47,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
         :param action_name: Action topic of the mission action server
         :param execute_task_cb: Callback to execute a single task
         """
+        super().__init__()
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
         self._goal_id_to_subtask_id: Dict[bytes, str] = {}
@@ -63,6 +65,21 @@ class Mission(SystemTask, ActiveChildrenTracker):
         mission subtask isn't running (or isn't known)."""
         current = self._goal_id_to_subtask_id.get(goal_id)
         return [current] if current is not None else []
+
+    def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
+        """Blocks execute_cb's loop between subtasks while this invocation is paused (request_pause() called and
+        request_resume() not yet), polling for either a resume or a genuine cancel of the mission's own action.
+
+        goal (never true for a pause, which is always redirected to the current subtask instead - see
+        CompositePauseTracker).
+
+        :return: True once clear to dispatch the next subtask, False if cancelled while paused.
+        """
+        resume_event = self._resume_events[goal_id]
+        while not resume_event.wait(timeout=1 / 50):
+            if goal_handle.is_cancel_requested:
+                return False
+        return True
 
     def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
         """Execution callback of the Mission Action Server, that executes subtasks one by one."""
@@ -82,6 +99,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
             )
 
         goal_id = bytes(goal_handle.goal_id.uuid)
+        self._start_pause_tracking(goal_id)
         try:
             for subtask, mission_result in zip(request.subtasks, result.mission_results):
                 if goal_handle.is_cancel_requested:
@@ -112,10 +130,15 @@ class Mission(SystemTask, ActiveChildrenTracker):
                         goal_handle.abort()
                     return result
 
+                if not self._wait_until_resumed(goal_id, goal_handle):
+                    goal_handle.canceled()
+                    return result
+
             goal_handle.succeed()
             return result
         finally:
             self._goal_id_to_subtask_id.pop(goal_id, None)
+            self._stop_pause_tracking(goal_id)
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
