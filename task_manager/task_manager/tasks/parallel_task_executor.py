@@ -30,14 +30,14 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 # Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
 from task_manager.tasks.parallel_task import ParallelTask
 from task_manager.tasks.system_tasks import SystemTask
 
 
 # This class wraps an action server which is to be only interfaced via ROS actions.
 # pylint: disable=too-few-public-methods
-class ParallelTaskExecutor(SystemTask, ActiveChildrenTracker):
+class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
     """This task executes a list of tasks in parallel."""
 
     def __init__(

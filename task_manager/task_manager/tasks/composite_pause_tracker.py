@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List
 
 
-class ActiveChildrenTracker(ABC):
+class CompositePauseTracker(ABC):
     """Shared base for composite tasks (Mission, ParallelTaskExecutor, ...) whose pause/resume must redirect to
     whichever of their own children are currently active.
 

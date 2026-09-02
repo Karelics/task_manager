@@ -29,11 +29,11 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
 from task_manager.tasks.system_tasks import SystemTask
 
 
-class Mission(SystemTask, ActiveChildrenTracker):
+class Mission(SystemTask, CompositePauseTracker):
     """Implements the Mission task, which is able to compose multiple existing tasks."""
 
     def __init__(
@@ -71,7 +71,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
         request_resume() not yet), polling for either a resume or a genuine cancel of the mission's own action.
 
         goal (never true for a pause, which is always redirected to the current subtask instead - see
-        ActiveChildrenTracker).
+        CompositePauseTracker).
 
         :return: True once clear to dispatch the next subtask, False if cancelled while paused.
         """

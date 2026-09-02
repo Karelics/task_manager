@@ -35,7 +35,7 @@ from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTask
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
 from task_manager.tasks.composite_resolution import pause_or_resume_group, resolve_down
 
 
@@ -96,7 +96,7 @@ class CancelTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic
@@ -168,7 +168,7 @@ class PauseTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic
@@ -242,7 +242,7 @@ class ResumeTasksService(SystemTask):
     """
 
     def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, ActiveChildrenTracker]
+        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
     ) -> None:
         self._node = node
         self._topic = topic

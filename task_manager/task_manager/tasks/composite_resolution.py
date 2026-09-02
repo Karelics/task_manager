@@ -25,11 +25,11 @@ from task_manager_msgs.msg import TaskStatus
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import TaskClient
-from task_manager.tasks.active_children_tracker import ActiveChildrenTracker
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
 
 
 def _composite_active_children(
-    task_client: TaskClient, composites: Dict[str, "ActiveChildrenTracker"]
+    task_client: TaskClient, composites: Dict[str, "CompositePauseTracker"]
 ) -> Optional[List[str]]:
     """If task_client is one of the registered composite task types, returns its currently active children's task_ids
     (possibly empty).
@@ -48,7 +48,7 @@ def _composite_active_children(
 def resolve_down(
     task_id: str,
     active_tasks: ActiveTasks,
-    composites: Dict[str, "ActiveChildrenTracker"],
+    composites: Dict[str, "CompositePauseTracker"],
     paused_flag: Optional[bool] = None,
 ) -> List[str]:
     """Expands task_id down to the leaf task(s) that should actually be paused/resumed.
@@ -92,7 +92,7 @@ def resolve_down(
 
 
 def _find_enclosing_composite(
-    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]
+    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]
 ) -> Optional[str]:
     """If task_id is currently a tracked active child of some other active composite task, returns that.
 
@@ -109,7 +109,7 @@ def _find_enclosing_composite(
     return None
 
 
-def _resolve_start_id(task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]) -> str:
+def _resolve_start_id(task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]) -> str:
     """The task_id resolve_down should actually expand from: task_id's enclosing composite if it's currently a tracked
     active child of one, otherwise task_id itself."""
     enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
@@ -119,7 +119,7 @@ def _resolve_start_id(task_id: str, active_tasks: ActiveTasks, composites: Dict[
 def _resolve_target_task_ids(
     task_id: str,
     active_tasks: ActiveTasks,
-    composites: Dict[str, "ActiveChildrenTracker"],
+    composites: Dict[str, "CompositePauseTracker"],
     paused_flag: Optional[bool] = None,
 ) -> List[str]:
     """Resolves a task_id given in a pause/resume request to the full set of leaf task_ids that must actually be
@@ -132,9 +132,9 @@ def _resolve_target_task_ids(
     return resolve_down(_resolve_start_id(task_id, active_tasks, composites), active_tasks, composites, paused_flag)
 
 
-def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "ActiveChildrenTracker"]) -> None:
+def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]) -> None:
     """Re-derives every active composite task's own displayed status, at any nesting depth: PAUSED once either its own
-    paused flag is armed (see ActiveChildrenTracker.is_paused) or all of its currently active children are PAUSED,
+    paused flag is armed (see CompositePauseTracker.is_paused) or all of its currently active children are PAUSED,
     IN_PROGRESS otherwise.
 
     A composite's own paused flag takes priority - it's what lets a composite report PAUSED even while it has no
@@ -180,7 +180,7 @@ def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "A
 def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     task_id: str,
     active_tasks: ActiveTasks,
-    composites: Dict[str, "ActiveChildrenTracker"],
+    composites: Dict[str, "CompositePauseTracker"],
     start_statuses: Tuple[TaskStatus, ...],
     callback: Callable[[str], bool],
     pause: bool,
