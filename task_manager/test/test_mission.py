@@ -208,6 +208,47 @@ class MissionUnittest(unittest.TestCase):
         finally:
             thread.join(timeout=2)
 
+    def test_pause_holds_the_next_subtask_until_resumed_when_skipping(self):
+        """Pausing a mission where task errors on pause but is allowed to be skipped.
+
+        The mission should pause and hold on executing the next subtask, if pause is called but the currently running
+        subtask returns ERROR and is allowed to be skipped. Regression test.
+        """
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a", allow_skipping=True),
+                SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b"),
+            ]
+        )
+        goal_id = bytes([0] * 16)
+        subtask_b_started = threading.Event()
+
+        def fake_execute_task_cb(goal, _goal_handle):
+            if goal.task_id == "a":
+                self.mission.request_pause(goal_id)
+                return ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}")
+            subtask_b_started.set()
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = fake_execute_task_cb
+        goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
+        thread.start()
+        try:
+            self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
+
+            # "b" must not start while paused - wait for a moment to show that it doesn't.
+            self.assertFalse(self._wait_until(subtask_b_started.is_set, timeout=0.2))
+
+            self.mission.request_resume(goal_id)
+            self.assertTrue(subtask_b_started.wait(timeout=2))
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            goal_handle.succeed.assert_called_once()
+        finally:
+            thread.join(timeout=2)
+
     def test_mission_not_successful(self):
         """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
         Mission is cancelled."""

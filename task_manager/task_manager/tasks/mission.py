@@ -118,6 +118,9 @@ class Mission(SystemTask, CompositePauseTracker):
                 if subtask_result.task_status != TaskStatus.DONE:
                     if subtask.allow_skipping and not goal_handle.is_cancel_requested:
                         mission_result.skipped = True
+                        if not self._wait_until_resumed(goal_id, goal_handle):
+                            goal_handle.canceled()
+                            return result
                         continue
 
                     # If the subtask has been cancelled together with the mission, we cancel the mission
