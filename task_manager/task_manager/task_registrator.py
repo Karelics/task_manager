@@ -144,7 +144,7 @@ class TaskRegistrator:
         Mission as a conflicting duplicate and cancel it out from under itself the moment a nested mission subtask tries
         to start.
         """
-        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelTaskExecutor"))
+        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelExecutor"))
 
     def _cancel_task_of_same_type(self, task_name: str) -> None:
         """Cancels the task with the same name.

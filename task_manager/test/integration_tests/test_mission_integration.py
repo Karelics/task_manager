@@ -358,6 +358,59 @@ class MissionTests(TaskManagerTestNode):
         # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
         self.execute_cancel_task([mission_id])
 
+    def test_mission_nested_inside_parallel_task_inside_mission_is_not_cancelled(self):
+        """A system/mission subtask started by a ParallelTaskExecutor (itself a subtask of an outer Mission) must not be
+        treated as a conflicting duplicate of the outer, still-running Mission.
+
+        Regression test for a source-prefix mismatch in TaskRegistrator._is_nested_mission_start: it checks for
+        "ParallelTaskExecutor" but ParallelTaskExecutor actually tags its subtasks' source as "ParallelExecutor-...", so
+        this nested mission start was incorrectly cancelling the outer mission.
+        """
+        inner_mission_goal = Mission.Goal(
+            subtasks=[SubtaskGoal(task_id="leaf", task_name="fibonacci_blocking", task_data='{"order": 3}')]
+        )
+        parallel_goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="inner_mission",
+                    task_name="system/mission",
+                    task_data=json.dumps(extract_values(inner_mission_goal)),
+                )
+            ]
+        )
+        outer_mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="parallel",
+                    task_name="system/perform_in_parallel",
+                    task_data=json.dumps(extract_values(parallel_goal)),
+                )
+            ]
+        )
+
+        goal = ExecuteTask.Goal(task_name="system/mission", task_data=json.dumps(extract_values(outer_mission_goal)))
+        future = self.execute_task_client.send_goal_async(goal)
+        self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("leaf")
+
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        outer_mission_id = next(
+            task_id
+            for task_id, task in active_tasks_by_id.items()
+            if task.task_specs.task_name == "system/mission" and task_id != "inner_mission"
+        )
+
+        # The outer mission must still be IN_PROGRESS, not aborted/cancelled by the inner mission's start.
+        self.assertEqual(active_tasks_by_id[outer_mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.assertIn("inner_mission", active_tasks_by_id)
+        self.assertEqual(active_tasks_by_id["inner_mission"].task_details.status, TaskStatus.IN_PROGRESS)
+
+        # Clean up
+        self.execute_cancel_task([outer_mission_id])
+
     def test_cancel_paused_mission(self):
         """Cancelling a paused mission cancels the currently running subtask and the mission status should change to
         CANCELED."""
