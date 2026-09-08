@@ -127,11 +127,10 @@ class Mission(SystemTask, CompositePauseTracker):
             self._goal_id_to_subtask_id.pop(goal_id, None)
             self._stop_pause_tracking(goal_id)
 
-
     @staticmethod
     def _build_result_stub(request):
-        """Generates task IDs for all subtasks and pre-fills a RECEIVED result for each, so that if something goes
-        wrong partway through execution, every requested subtask still has a result."""
+        """Generates task IDs for all subtasks and pre-fills a RECEIVED result for each, so that if something goes wrong
+        partway through execution, every requested subtask still has a result."""
         result = MissionAction.Result()
         for subtask in request.subtasks:
             if subtask.task_id == "":
