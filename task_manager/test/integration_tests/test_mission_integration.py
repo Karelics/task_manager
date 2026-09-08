@@ -284,7 +284,7 @@ class MissionTests(TaskManagerTestNode):
         goal.task_data = json.dumps(extract_values(mission_goal))
 
         future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        self._get_response(future, timeout=5)
 
         self.wait_for_task_start("123456")
         active_tasks_by_id = {
@@ -298,6 +298,7 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
 
         self.wait_for_task_status("123456", TaskStatus.DONE)
+        self.wait_for_task_status(mission_id, TaskStatus.DONE)  # This prevents flakiness of the test
         self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.DONE)
 
     def test_pause_subtask_of_parallel_task_running_inside_mission(self):
