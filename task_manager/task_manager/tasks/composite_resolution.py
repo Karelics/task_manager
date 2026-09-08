@@ -94,14 +94,8 @@ def resolve_down(
 def _find_enclosing_composite(
     task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]
 ) -> Optional[str]:
-    """If task_id is currently a tracked active child of some other active composite task, returns that.
-
-    composite's own task_id - one hop up. None if task_id isn't a tracked child of anything right now.
-
-    This is what makes pausing/resuming one member of a group and pausing/resuming the group itself converge on
-    the same outcome: the request gets redirected to the parent first, then `resolve_down` re-expands it back to
-    every one of its currently active children.
-    """
+    """Return the task_id of the active composite that currently tracks task_id as one of its active children, one hop
+    up, or None if no such composite exists right now."""
     for task_name in composites:
         for candidate in active_tasks.get_active_tasks_by_name(task_name):
             if task_id in (_composite_active_children(candidate, composites)):

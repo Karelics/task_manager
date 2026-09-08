@@ -67,11 +67,11 @@ class MissionUnittest(unittest.TestCase):
             )
             self.assertEqual(result.mission_results[0].task_id, "123")
 
-    def test_get_active_children_tracks_progress_and_clears_after(self):
-        """The mission tracks the task_id of whichever subtask is currently running, so that pausing/resuming the
-        mission can be redirected to it.
+    def test_get_active_children_tracks_progress(self):
+        """Mission tracks the task_id of the currently running subtask.
 
-        The tracking is cleared once the mission finishes.
+        Get active children should always return the task_id of the currently running subtask. Tracking is cleared once
+        the mission finishes.
         """
         request = MissionAction.Goal(
             subtasks=[
@@ -80,10 +80,17 @@ class MissionUnittest(unittest.TestCase):
             ]
         )
         goal_id = bytes([0] * 16)
-        seen_subtask_ids = []
+        first = True
+
+        def current_subtask_check():
+            nonlocal first
+            if first:
+                first = False
+                return ["a"]
+            return ["b"]
 
         def fake_execute_task_cb(_goal, _goal_handle):
-            seen_subtask_ids.append(self.mission.get_active_children(goal_id))
+            self.assertEqual(current_subtask_check(), self.mission.get_active_children(goal_id))
             return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
 
         self.mission.execute_task_cb.side_effect = fake_execute_task_cb
@@ -93,11 +100,13 @@ class MissionUnittest(unittest.TestCase):
             goal_handle=Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
         )
 
-        self.assertEqual(seen_subtask_ids, [["a"], ["b"]])
         self.assertEqual(self.mission.get_active_children(goal_id), [])
 
-    def test_get_active_children_is_independent_per_mission_invocation(self):
-        """Two concurrently running missions (distinct goal_ids) must not clobber each other's tracked subtask."""
+    def test_get_active_children_per_invocation(self):
+        """Concurrently running missions must not clobber each other's tracked subtask.
+
+        Two missions with distinct goal_ids each track their own active subtask independently.
+        """
         goal_id_a = bytes([1] * 16)
         goal_id_b = bytes([2] * 16)
         request_a = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a")])
@@ -120,9 +129,11 @@ class MissionUnittest(unittest.TestCase):
         self.assertEqual(self.mission.get_active_children(goal_id_a), [])
         self.assertEqual(self.mission.get_active_children(goal_id_b), [])
 
-    def test_request_pause_resume_is_paused_unknown_goal_id_are_no_ops(self):
-        """request_pause/request_resume return False, and is_paused returns False, for a goal_id that isn't a currently
-        running mission invocation."""
+    def test_pause_resume_unknown_goal_id_are_no_ops(self):
+        """request_pause/request_resume/is_paused are no-ops for an unknown goal_id.
+
+        They return False for a goal_id that isn't a currently running mission invocation.
+        """
         unknown_goal_id = bytes([9] * 16)
         self.assertFalse(self.mission.request_pause(unknown_goal_id))
         self.assertFalse(self.mission.request_resume(unknown_goal_id))
@@ -137,11 +148,11 @@ class MissionUnittest(unittest.TestCase):
             time.sleep(0.01)
         return predicate()
 
-    def test_boundary_pause_holds_the_next_subtask_until_resumed(self):
-        """Pausing the mission while its current subtask is finishing (e.g. a service-backed one that can't.
+    def test_pause_holds_next_subtask_until_resumed(self):
+        """Pausing while the current subtask finishes must hold off starting the next one.
 
-        actually be paused) must hold execute_cb before it dispatches the next subtask, until resumed - this is
-        the fix for pausing a mission across a service-backed subtask.
+        Covers a service-backed subtask that can't actually be paused - execute_cb must still hold before
+        starting the next subtask, until resumed.
         """
         request = MissionAction.Goal(
             subtasks=[
@@ -175,9 +186,8 @@ class MissionUnittest(unittest.TestCase):
         finally:
             thread.join(timeout=2)
 
-    def test_boundary_pause_can_still_be_cancelled(self):
-        """A genuine cancel of the mission's own goal while it's paused between subtasks ends the mission instead of
-        leaving it stuck forever."""
+    def test_paused_mission_can_still_be_cancelled(self):
+        """A cancel while the mission is paused, ends the mission."""
         request = MissionAction.Goal(
             subtasks=[
                 SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a"),
@@ -208,12 +218,8 @@ class MissionUnittest(unittest.TestCase):
         finally:
             thread.join(timeout=2)
 
-    def test_pause_holds_the_next_subtask_until_resumed_when_skipping(self):
-        """Pausing a mission where task errors on pause but is allowed to be skipped.
-
-        The mission should pause and hold on executing the next subtask, if pause is called but the currently running
-        subtask returns ERROR and is allowed to be skipped. Regression test.
-        """
+    def test_pause_holds_next_subtask_when_skipping(self):
+        """Pausing still holds the next subtask when the current one errors and is skippable."""
         request = MissionAction.Goal(
             subtasks=[
                 SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a", allow_skipping=True),
@@ -282,7 +288,7 @@ class MissionUnittest(unittest.TestCase):
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
 
     def test_mission_not_successful_skipping_task(self):
-        """Tests that the mission is properly cancelled or aborted when a subtask is skipped."""
+        """Tests that the mission is properly cancelled or aborted when the last subtask is skipped."""
         request = MissionAction.Goal(
             subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}")]
         )

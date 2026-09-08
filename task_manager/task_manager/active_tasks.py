@@ -72,7 +72,7 @@ class ActiveTasks:
             self._active_tasks_changed()
 
     def get_active_tasks(self) -> List[TaskClient]:
-        """Return all the task clients that are currently active.
+        """Returns all the task clients that are currently active.
 
         :return: List of active TaskClients. Empty list if there are no active tasks
         """
@@ -100,7 +100,7 @@ class ActiveTasks:
             self._active_tasks_changed()
 
     def get_active_tasks_by_name(self, task_name: str) -> List[TaskClient]:
-        """Return all the task clients that exist with a given name.
+        """Returns all the task clients that exist with a given name.
 
         :param task_name: Name of the task to look for.
         :return: List of active TaskClients. Empty list if active task with the given name doesn't exist

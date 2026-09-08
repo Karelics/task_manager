@@ -140,7 +140,7 @@ class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
 
         :param goal_handle: Handle of this execute in parallel goal
         :param subtasks: Reference to the list of actions. This list is filled in this method, by adding
-        all actions that successfully launched
+            all actions that successfully launched
         :return: The same reference to subtasks list
         :raises RuntimeError: If some task fails to start
         """

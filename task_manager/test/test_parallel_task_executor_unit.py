@@ -158,10 +158,9 @@ def test_request_pause_resume_is_paused_state_transitions(parallel_task_executor
 
 
 def test_wait_actions_done_ignores_a_finished_member_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
-    """A member reaching goal_done while the group is paused (e.g. a service-backed subtask that couldn't.
+    """ParallelTask should not tear down if subtask finishes when pausing.
 
-    actually be paused and simply ran to completion) must not tear down the group - only once resumed does the
-    group notice it's done.
+    ParallelTask should restart everything after pause.
     """
     goal_id = b"\x03" * 16
     goal_handle = MagicMock()

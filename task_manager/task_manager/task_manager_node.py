@@ -266,7 +266,7 @@ class TaskManager(Node):
         :param request: ExecuteTask.Goal message containing the task to be started
         :param response: ExecuteTask.Result message to be filled with error code if starting the task fails
         :return: If tasks starts successfully, returns the TaskClient and None.
-          If starting the task fails, returns None and the error code.
+            If starting the task fails, returns None and the error code.
         """
         # Mutex lock required, since we need to be sure that the previous blocking task has
         # truly finished before we try to start another one from another thread.

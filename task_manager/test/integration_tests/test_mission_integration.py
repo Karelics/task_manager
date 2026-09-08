@@ -302,11 +302,7 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.DONE)
 
     def test_pause_subtask_of_parallel_task_running_inside_mission(self):
-        """Pausing one of the two subtasks of a ParallelTaskExecutor that itself runs as a Mission subtask pauses every
-        member of that parallel group, and the status sync now bridges all the way up through the nesting:
-
-        the parallel task's own status, and the Mission's own status above it, both end up PAUSED too.
-        """
+        """All the tasks should end up with PAUSED state."""
         parallel_goal = PerformInParallel.Goal(
             subtasks=[
                 SubtaskGoal(task_id="fib1", task_name="fibonacci", task_data='{"order": 10}'),

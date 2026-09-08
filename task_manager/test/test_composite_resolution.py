@@ -103,8 +103,10 @@ class ResolveDownTests(unittest.TestCase):
         self.assertEqual(resolve_down("p1", self.active_tasks, self.composites), ["leaf1", "leaf2"])
 
     def test_recurses_through_nested_composites_of_mixed_types(self):
-        """A Mission's active child can itself be a parallel task (and vice versa) - resolution must follow the
-        whole chain down to the real leaves, not stop after one hop."""
+        """Resolution follows the whole chain down to the real leaves, not just one hop.
+
+        A Mission's active child can itself be a parallel task, and vice versa.
+        """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
@@ -129,10 +131,10 @@ class ResolveDownTests(unittest.TestCase):
         self.assertRaises(KeyError, resolve_down, "unknown", self.active_tasks, self.composites)
 
     def test_child_vanished_before_resolution_contributes_no_leaves(self):
-        """A child listed as active by the composite's own bookkeeping but no longer in ActiveTasks (e.g. a service task
-        that finished naturally between being listed and being resolved) is skipped, not a.
+        """A child listed as active by the composite's own bookkeeping but no longer in ActiveTasks.
 
-        KeyError - only the originally requested top-level task_id must be genuinely active.
+        For example, a service task that finished naturally between being listed and being resolved, is skipped,
+        not a KeyError - only the originally requested top-level task_id must be genuinely active.
         """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task"))
@@ -262,9 +264,10 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.IN_PROGRESS)
 
     def test_settles_a_nested_chain_in_a_single_call(self):
-        """A Mission whose active child is a parallel task, whose members are all paused, must end up PAUSED.
+        """Test pausing a nested chain of composite tasks.
 
-        itself too - in one call, regardless of internal scan order (multi-pass fixpoint).
+        A Mission whose active child is a parallel task, whose members are all paused, must end up PAUSED
+        itself too - in one call, regardless of internal scan order.
         """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
@@ -291,10 +294,10 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.IN_PROGRESS)
 
     def test_marks_composite_paused_via_own_flag_with_no_active_children(self):
-        """A composite whose own paused flag is armed (e.g. a Mission paused right between two subtasks, whose previous
-        subtask already finished and vanished) must be marked PAUSED even though it currently has no.
+        """A composite with no active children but its own paused flag armed should be marked PAUSED.
 
-        active children at all - this is the fix for pausing a mission across a service-backed subtask.
+        For example, a Mission paused right between two subtasks, whose previous subtask already finished and vanished,
+        must be marked PAUSED even though it currently has no active children at all.
         """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.mission.get_active_children.return_value = []
@@ -305,10 +308,10 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
     def test_own_paused_flag_takes_priority_over_children_derived_status(self):
-        """A composite's own paused flag being armed marks it PAUSED even while its active children are still
-        IN_PROGRESS (e.g. the mission has already dispatched its next subtask's action call before pausing was.
+        """Pausing composite should pause the children too.
 
-        requested for it - see resolve_down's `paused_flag` parameter and its ordering guarantee).
+        A composite's own paused flag being armed marks it PAUSED even while its active children are still IN_PROGRESS
+        (e.g. the mission has already dispatched its next subtask's action call before pausing was requested for it).
         """
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
@@ -320,8 +323,9 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
     def test_tolerates_a_child_that_vanished_between_being_listed_and_being_checked(self):
-        """A child reported active by the composite's own bookkeeping but no longer in ActiveTasks (e.g. a.
+        """Child of the composite task may finish between being listed and being checked.
 
+        A child reported active by the composite's own bookkeeping but no longer in ActiveTasks (e.g. a
         service task that just finished) must not raise - it simply doesn't count towards "all children
         paused".
         """
@@ -410,8 +414,9 @@ class ResolveDownPausedFlagTests(unittest.TestCase):
         self.parallel.request_pause.assert_not_called()
 
     def test_arms_every_composite_encountered_while_descending_through_nested_composites(self):
-        """A Mission whose active subtask is itself a parallel task must have BOTH the Mission's and the.
+        """Pausing a mission with nested parallel tasks arms all relevant paused flags.
 
+        A Mission whose active subtask is itself a parallel task must have BOTH the Mission's and the
         ParallelTaskExecutor's own paused flags armed - not just the top-level one - so that a pause entering at
         one depth (e.g. redirected up from a leaf to its immediate parallel-task parent) and a later resume
         entering at another depth (e.g. the mission's own task_id) don't leave an intermediate composite's flag
@@ -453,9 +458,8 @@ class PauseOrResumeGroupTests(unittest.TestCase):
         self.mission.request_pause.assert_called_once_with(bytes([1] * 16))
         self.assertTrue(success)
 
-    def test_a_member_that_vanished_before_the_callback_runs_is_not_a_failure(self):
-        """Tests that pause_or_resume_group considers it a success even if a child has vanished before the callback
-        runs."""
+    def test_pause_is_successful_if_the_task_finishes_before_pausing_is_done(self):
+        """Tests that pause is considered successful even if the task finishes before pausing is done."""
         self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
         self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["vanished"]}.get(goal_id, [])
         callback = Mock()
