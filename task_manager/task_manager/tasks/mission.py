@@ -101,7 +101,10 @@ class Mission(SystemTask, CompositePauseTracker):
         goal_id = bytes(goal_handle.goal_id.uuid)
         self._start_pause_tracking(goal_id)
         try:
-            for subtask, mission_result in zip(request.subtasks, result.mission_results):
+            for i in range(len(request.subtasks)):
+                subtask = request.subtasks[i]
+                mission_result = result.mission_results[i]
+                # for subtask, mission_result in zip(request.subtasks, result.mission_results):
                 if goal_handle.is_cancel_requested:
                     # A cancel/pause arrived before this subtask could be dispatched - don't start it
                     # just to immediately tear it down again.
@@ -118,6 +121,9 @@ class Mission(SystemTask, CompositePauseTracker):
                 if subtask_result.task_status != TaskStatus.DONE:
                     if subtask.allow_skipping and not goal_handle.is_cancel_requested:
                         mission_result.skipped = True
+                        if i == len(request.subtasks) - 1:
+                            # This is the last subtask, so we break out
+                            break
                         if not self._wait_until_resumed(goal_id, goal_handle):
                             goal_handle.canceled()
                             return result
@@ -133,6 +139,9 @@ class Mission(SystemTask, CompositePauseTracker):
                         goal_handle.abort()
                     return result
 
+                if i == len(request.subtasks) - 1:
+                    # This is the last subtask, so we break out
+                    break
                 if not self._wait_until_resumed(goal_id, goal_handle):
                     goal_handle.canceled()
                     return result

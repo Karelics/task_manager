@@ -271,6 +271,35 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
         self.assertEqual(mission_result.mission_results[2].task_status, TaskStatus.DONE)
 
+    def test_pause_mission_on_final_task_which_is_service(self):
+        """The mission should finish instead of pausing when the final task is a service task."""
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 1}', task_id="123456"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        mission_goal_handle = self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("123456")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        pause_response = self.execute_pause_task([mission_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+
+        self.wait_for_task_status("123456", TaskStatus.DONE)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.DONE)
+
     def test_pause_subtask_of_parallel_task_running_inside_mission(self):
         """Pausing one of the two subtasks of a ParallelTaskExecutor that itself runs as a Mission subtask pauses every
         member of that parallel group, and the status sync now bridges all the way up through the nesting:
