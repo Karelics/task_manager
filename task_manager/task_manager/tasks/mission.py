@@ -67,13 +67,9 @@ class Mission(SystemTask, CompositePauseTracker):
         return [current] if current is not None else []
 
     def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
-        """Blocks execute_cb's loop between subtasks while this invocation is paused (request_pause() called and
-        request_resume() not yet), polling for either a resume or a genuine cancel of the mission's own action.
+        """Blocks execute_cb's loop between subtasks while this mission is paused.
 
-        goal (never true for a pause, which is always redirected to the current subtask instead - see
-        CompositePauseTracker).
-
-        :return: True once clear to dispatch the next subtask, False if cancelled while paused.
+        :return: True once resume is called, False if the mission gets cancelled.
         """
         resume_event = self._resume_events[goal_id]
         while not resume_event.wait(timeout=1 / 50):
