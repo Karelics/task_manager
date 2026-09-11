@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from multiprocessing import Event
 from typing import Any, Callable, Dict, List, Optional
 
@@ -90,8 +91,21 @@ class TaskClient(ABC):
         """Resume a previously paused task synchronously."""
 
 
-# TODO: Bundle pausing related members to resolve too-many-instance-attributes
-class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attributes
+@dataclass
+class _PauseState:
+    """Bookkeeping for ActionTaskClient's pause/resume mechanics."""
+
+    pausing: bool = False
+    paused: bool = False
+    pause_done: Any = field(default_factory=Event)
+    last_goal_message: Optional[Any] = None
+    # Result of each paused segment (the Result the server returned when its goal was cancelled by
+    # pause_task()), in chronological order. Merged into the final result via
+    # task_specs.result_concat_fields once the task truly finishes.
+    paused_results: List[Any] = field(default_factory=list)
+
+
+class ActionTaskClient(TaskClient):
     """Task client that keeps track of a single Action task."""
 
     DONE_STATES = [GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED]
@@ -113,14 +127,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
         self._task_details = task_details
         self._task_specs = task_specs
         self._goal_done = Event()
-        self._pausing = False
-        self._paused = False
-        self._pause_done = Event()
-        self._last_goal_message: Optional[Any] = None
-        # Result of each paused segment (the Result the server returned when its goal was cancelled by
-        # pause_task()), in chronological order. Merged into the final result via
-        # task_specs.result_concat_fields once the task truly finishes.
-        self._paused_results: List[Any] = []
+        self._pause_state = _PauseState()
 
         self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
 
@@ -168,7 +175,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
         :param goal_message: ROS action goal message
         :raises TaskStartError: If task cannot be started
         """
-        self._last_goal_message = goal_message
+        self._pause_state.last_goal_message = goal_message
 
         if not self._client.wait_for_server(timeout_sec=self.server_wait_timeout):
             self.task_details.status = TaskStatus.ERROR
@@ -263,9 +270,9 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
         cancel's done-callback was suppressed by pause_task() at the time (see `_goal_done_cb`) - so nothing will
         ever fire it on its own; this is the only place that ever will. Returns False (no-op) otherwise.
         """
-        if not self._paused:
+        if not self._pause_state.paused:
             return False
-        self._paused = False
+        self._pause_state.paused = False
         self.task_details.status = TaskStatus.CANCELED
         self.task_details.result = self._merged_result()
         self._notify_done_callbacks()
@@ -340,24 +347,24 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
 
         :raises PauseTaskFailedError: If the task is already paused/finished, or the cancel fails/times out.
         """
-        if self._paused:
+        if self._pause_state.paused:
             raise PauseTaskFailedError("Task is already paused.")
         if self.goal_done:
             raise PauseTaskFailedError("Cannot pause a task that has already finished.")
         if not self._goal_handle:
             raise PauseTaskFailedError("Couldn't pause the task, goal handle does not exist!")
 
-        self._pausing = True
-        self._pause_done = Event()
+        self._pause_state.pausing = True
+        self._pause_state.pause_done = Event()
         try:
             self.request_canceling()
         except CancelTaskFailedError as e:
-            self._pausing = False
+            self._pause_state.pausing = False
             raise PauseTaskFailedError(f"Failed to pause the task: {e}") from e
 
         # Wait for _goal_done_cb to set the pause_done event, which indicates that the cancel has been done.
-        if not self._pause_done.wait(timeout=self._task_specs.cancel_timeout):
-            self._pausing = False
+        if not self._pause_state.pause_done.wait(timeout=self._task_specs.cancel_timeout):
+            self._pause_state.pausing = False
             if self.goal_done:
                 # The goal finished on its own (succeeded/aborted) before our cancel could take effect -
                 # _goal_done_cb() has already fired the real done-callbacks with the real result. Nothing to undo,
@@ -367,8 +374,8 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
                 f"Task didn't pause within {self._task_specs.cancel_timeout} second timeout after it was cancelled."
             )
 
-        self._pausing = False
-        self._paused = True
+        self._pause_state.pausing = False
+        self._pause_state.paused = True
         self.task_details.status = TaskStatus.PAUSED
 
     def resume_task(self) -> None:
@@ -378,14 +385,14 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
 
         :raises ResumeTaskFailedError: If (re)starting the goal fails.
         """
-        if not self._paused:
+        if not self._pause_state.paused:
             return
 
-        self._paused = False
+        self._pause_state.paused = False
         self._goal_handle = None
         self._result_future = None
         try:
-            self.start_task_async(self._last_goal_message)
+            self.start_task_async(self._pause_state.last_goal_message)
         except TaskStartError as e:
             # start_task_async() already set status to ERROR, but goal_done is only ever set via the done-callback
             # chain, which nothing else will trigger for a start failure - without this, the task would stay
@@ -399,14 +406,14 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
 
         :param future: Future object giving the result of the action call.
         """
-        if self._pausing and self._canceled_result(future):
+        if self._pause_state.pausing and self._canceled_result(future):
             # This is the cancel triggered from pause_task(). The task is not actually
             # finished, so we skip the normal "task done" side effects entirely. The partial result the
             # server attached to the cancelled goal is kept, to be concatenated into the final result
             # (see _merged_result).
             if not future.cancelled():
-                self._paused_results.append(future.result().result)
-            self._pause_done.set()
+                self._pause_state.paused_results.append(future.result().result)
+            self._pause_state.pause_done.set()
             return
 
         # Reached even while _pausing is True if the goal genuinely finished (succeeded/aborted) on its own,
@@ -463,7 +470,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
 
         Best-effort: a listed field that doesn't exist or isn't concatenatable is logged and skipped, never fatal.
         """
-        partials = self._paused_results
+        partials = self._pause_state.paused_results
         if final_result is None:
             if not partials:
                 return self.task_specs.msg_interface.Result()
