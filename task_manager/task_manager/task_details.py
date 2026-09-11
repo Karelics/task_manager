@@ -25,15 +25,10 @@ from task_manager_msgs.msg import TaskStatus
 class TaskDetails:
     """Helper dataclass holding the more detailed public information about a single task.
 
-    Params:
-
-        task_id -- Unique UUID of the task
-
-        source -- Where the task was initiated from. For example "CLOUD"
-
-        status -- Current status of the task in str(TaskStatus)
-
-        result -- Final result of the task
+    :param task_id: Unique UUID of the task
+    :param source: Where the task was initiated from. For example "CLOUD"
+    :param status: Current status of the task in str(TaskStatus)
+    :param result: Final result of the task
     """
 
     # Constructor arguments

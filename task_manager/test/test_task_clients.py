@@ -300,12 +300,12 @@ class ServiceTaskClientUnittests(unittest.TestCase):
         task_client._done_callback(future=mock_future)
         self.assertEqual(task_client.task_details.status, TaskStatus.ERROR)
 
-    def test_pause_task_already_finished_raises(self):
-        """Pausing a service-backed task that has already finished raises straight away."""
+    def test_pause_task_already_finished_succeeds(self):
+        """Pausing a service-backed task that has already finished succeeds."""
         task_specs = Mock(cancel_timeout=1.0)
         task_client = ServiceTaskClient(node=Mock(), task_details=Mock(), task_specs=task_specs, service_clients={})
         task_client._goal_done.set()
-        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+        self.assertTrue(task_client.pause_task() is None)  # Does not raise and simply returns
 
     def test_pause_task_raises_if_service_does_not_finish_within_grace_period(self):
         """Pausing waits out cancel_timeout for the service to finish naturally, and only fails if it's still running

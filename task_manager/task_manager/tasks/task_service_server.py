@@ -40,7 +40,6 @@ class TaskServiceServer:
 
     def __init__(self, node: Node, task_specs: TaskSpecs, task_topic_prefix: str, execute_task_cb: callable):
         """
-
         :param node: ROS Node
         :param task_specs: General task info
         :param task_topic_prefix: Service topic prefix for the task
