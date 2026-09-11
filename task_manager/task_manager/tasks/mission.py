@@ -29,10 +29,11 @@ from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.system_tasks import ActiveChildrenTracker, SystemTask
+from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
+from task_manager.tasks.system_tasks import SystemTask
 
 
-class Mission(SystemTask, ActiveChildrenTracker):
+class Mission(SystemTask, CompositePauseTracker):
     """Implements the Mission task, which is able to compose multiple existing tasks."""
 
     def __init__(
@@ -46,6 +47,7 @@ class Mission(SystemTask, ActiveChildrenTracker):
         :param action_name: Action topic of the mission action server
         :param execute_task_cb: Callback to execute a single task
         """
+        super().__init__()
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
         self._goal_id_to_subtask_id: Dict[bytes, str] = {}
@@ -64,31 +66,32 @@ class Mission(SystemTask, ActiveChildrenTracker):
         current = self._goal_id_to_subtask_id.get(goal_id)
         return [current] if current is not None else []
 
-    def execute_cb(self, goal_handle: ServerGoalHandle) -> MissionAction.Result:
+    def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
+        """Blocks execute_cb's loop between subtasks while this mission is paused.
+
+        :return: True once resume is called, False if the mission gets cancelled.
+        """
+        resume_event = self._resume_events[goal_id]
+        while not resume_event.wait(timeout=1 / 50):
+            if goal_handle.is_cancel_requested:
+                return False
+        return True
+
+    def execute_cb(self, goal_handle):
         """Execution callback of the Mission Action Server, that executes subtasks one by one."""
-        # Generate task IDs for all the tasks and append results, so that if something goes wrong
-        # with subtask execution, we still have a result for all the requested subtasks
         request = goal_handle.request
-        result = MissionAction.Result()
-        for subtask in request.subtasks:
-            if subtask.task_id == "":
-                subtask.task_id = str(uuid.uuid4())
-            result.mission_results.append(
-                SubtaskResult(
-                    task_name=subtask.task_name,
-                    task_id=subtask.task_id,
-                    task_status=TaskStatus.RECEIVED,
-                )
-            )
+        result = self._build_result_stub(request)
 
         goal_id = bytes(goal_handle.goal_id.uuid)
+        self._start_pause_tracking(goal_id)
         try:
-            for subtask, mission_result in zip(request.subtasks, result.mission_results):
+            for i, (subtask, mission_result) in enumerate(zip(request.subtasks, result.mission_results)):
                 if goal_handle.is_cancel_requested:
                     # A cancel/pause arrived before this subtask could be dispatched - don't start it
                     # just to immediately tear it down again.
                     goal_handle.canceled()
                     return result
+
                 self._goal_id_to_subtask_id[goal_id] = subtask.task_id
                 goal = ExecuteTask.Goal(
                     task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
@@ -98,24 +101,40 @@ class Mission(SystemTask, ActiveChildrenTracker):
                 mission_result.skipped = False
 
                 if subtask_result.task_status != TaskStatus.DONE:
-                    if subtask.allow_skipping and not goal_handle.is_cancel_requested:
-                        mission_result.skipped = True
-                        continue
+                    if not subtask.allow_skipping or goal_handle.is_cancel_requested:
+                        # If the subtask has been cancelled together with the mission, we cancel the mission.
+                        # Otherwise (cancelled/failed/indefinitely in progress on its own, or the mission was
+                        # cancelled but the subtask itself is failed/in-progress) we abort the mission.
+                        if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
+                            goal_handle.canceled()
+                        else:
+                            goal_handle.abort()
+                        return result
+                    mission_result.skipped = True
 
-                    # If the subtask has been cancelled together with the mission, we cancel the mission
-                    # If the subtask has been cancelled/failed/indefinitely in progress, we abort the mission
-                    # If the mission has been cancelled but the subtask is failed/indefinitely in progress,
-                    # we abort the mission
-                    if subtask_result.task_status == TaskStatus.CANCELED and goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                    else:
-                        goal_handle.abort()
+                is_last = i == len(request.subtasks) - 1
+                if not is_last and not self._wait_until_resumed(goal_id, goal_handle):
+                    goal_handle.canceled()
                     return result
 
             goal_handle.succeed()
             return result
         finally:
             self._goal_id_to_subtask_id.pop(goal_id, None)
+            self._stop_pause_tracking(goal_id)
+
+    @staticmethod
+    def _build_result_stub(request):
+        """Generates task IDs for all subtasks and pre-fills a RECEIVED result for each, so that if something goes wrong
+        partway through execution, every requested subtask still has a result."""
+        result = MissionAction.Result()
+        for subtask in request.subtasks:
+            if subtask.task_id == "":
+                subtask.task_id = str(uuid.uuid4())
+            result.mission_results.append(
+                SubtaskResult(task_name=subtask.task_name, task_id=subtask.task_id, task_status=TaskStatus.RECEIVED)
+            )
+        return result
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:

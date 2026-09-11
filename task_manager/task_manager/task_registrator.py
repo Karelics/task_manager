@@ -144,7 +144,7 @@ class TaskRegistrator:
         Mission as a conflicting duplicate and cancel it out from under itself the moment a nested mission subtask tries
         to start.
         """
-        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelTaskExecutor"))
+        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelExecutor"))
 
     def _cancel_task_of_same_type(self, task_name: str) -> None:
         """Cancels the task with the same name.
@@ -207,13 +207,12 @@ def populate_msg(task_data: str, msg_interface: Any):
 
 
 def populate_message_from_json(data: Dict[str, Any], message_instance: Any) -> Any:
-    """Populates ros message with given data. Data may contain extra fields which are simply ignored. Has same interface
+    """Populates ROS message with given data. Data may contain extra fields which are simply ignored. Has same interface
     as populate_instance from rosbridge_library.
 
     :param data: a dictionary of the input data
     :param message_instance: Instance of the wanted message type
-    :return Message Instance with fields filled with input data
-
+    :return: Message Instance with fields filled with input data
     :raises rosbridge_library.internal.message_conversion.FieldTypeMismatchException: if types in the message fields
     do not match.
     :raises KeyError: if input data does not contain the keys of the message type

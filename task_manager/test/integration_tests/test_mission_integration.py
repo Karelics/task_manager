@@ -169,14 +169,13 @@ class MissionTests(TaskManagerTestNode):
     def test_pause_and_resume_mission_with_many_subtasks(self):
         """Make sure that the mission continues the execution from the correct step.
 
-        Let's the first task to succeed, then pauses the mission but since the second task is a service task, it will
-        complete and the mission will continue from the third task.
+        Let's the first task to succeed, then pauses the mission on the second task. Resume should then continue from
+        the second task and eventually complete the third task and the whole mission.
         """
         mission_goal = Mission.Goal(
             subtasks=[
                 SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="123"),
                 SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="456"),
-                # SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 1}', task_id="456"),
                 SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="789"),
             ]
         )
@@ -219,12 +218,91 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
         self.assertEqual(mission_result.mission_results[2].task_status, TaskStatus.DONE)
 
-    def test_pause_subtask_of_parallel_task_running_inside_mission(self):
-        """Pausing one of the two subtasks of a ParallelTaskExecutor that itself runs as a Mission subtask pauses every
-        member of that parallel group, and the status sync now bridges all the way up through the nesting:
+    def test_pause_and_resume_mission_with_many_subtasks_pausing_service_task(self):
+        """Make sure that pausing a mission while its active subtask is a service task still pauses the mission.
 
-        the parallel task's own status, and the Mission's own status above it, both end up PAUSED too.
+        Lets the first task succeed, then pauses the mission while the second (service) task is running. Since a
+        service call can't be interrupted mid-flight, it's allowed to complete, but the mission itself must stay
+        paused - not dispatch the third task - until it's explicitly resumed.
         """
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="123"),
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 1}', task_id="456"),
+                SubtaskGoal(task_name="fibonacci_blocking", task_data='{"order": 1}', task_id="789"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        mission_goal_handle = self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("456")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        res = self.execute_pause_task([mission_id])
+        print(res)
+        self.wait_for_task_status("456", TaskStatus.DONE)  # The service task will complete when paused
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+
+        # Resuming any task related to the mission should resume the whole mission
+        resume_response = self.execute_resume_task([mission_id])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": [mission_id]})
+        )
+
+        self.wait_for_task_status("789", TaskStatus.IN_PROGRESS)
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+
+        mission_response = mission_goal_handle.get_result()
+        mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
+
+        self.assertEqual(mission_response.status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[1].task_status, TaskStatus.DONE)
+        self.assertEqual(mission_result.mission_results[2].task_status, TaskStatus.DONE)
+
+    def test_pause_mission_on_final_task_which_is_service(self):
+        """The mission should finish instead of pausing when the final task is a service task."""
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="add_two_ints", task_data='{"a": 0, "b": 1}', task_id="123456"),
+            ]
+        )
+
+        goal = ExecuteTask.Goal()
+        goal.task_name = "system/mission"
+        goal.task_data = json.dumps(extract_values(mission_goal))
+
+        future = self.execute_task_client.send_goal_async(goal)
+        self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("123456")
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        mission_id = next(
+            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+        )
+
+        pause_response = self.execute_pause_task([mission_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+
+        self.wait_for_task_status("123456", TaskStatus.DONE)
+        self.wait_for_task_status(mission_id, TaskStatus.DONE)  # This prevents flakiness of the test
+        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.DONE)
+
+    def test_pause_subtask_of_parallel_task_running_inside_mission(self):
+        """All the tasks should end up with PAUSED state."""
         parallel_goal = PerformInParallel.Goal(
             subtasks=[
                 SubtaskGoal(task_id="fib1", task_name="fibonacci", task_data='{"order": 10}'),
@@ -279,6 +357,59 @@ class MissionTests(TaskManagerTestNode):
 
         # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
         self.execute_cancel_task([mission_id])
+
+    def test_mission_nested_inside_parallel_task_inside_mission_is_not_cancelled(self):
+        """A system/mission subtask started by a ParallelTaskExecutor (itself a subtask of an outer Mission) must not be
+        treated as a conflicting duplicate of the outer, still-running Mission.
+
+        Regression test for a source-prefix mismatch in TaskRegistrator._is_nested_mission_start: it checks for
+        "ParallelTaskExecutor" but ParallelTaskExecutor actually tags its subtasks' source as "ParallelExecutor-...", so
+        this nested mission start was incorrectly cancelling the outer mission.
+        """
+        inner_mission_goal = Mission.Goal(
+            subtasks=[SubtaskGoal(task_id="leaf", task_name="fibonacci_blocking", task_data='{"order": 3}')]
+        )
+        parallel_goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="inner_mission",
+                    task_name="system/mission",
+                    task_data=json.dumps(extract_values(inner_mission_goal)),
+                )
+            ]
+        )
+        outer_mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="parallel",
+                    task_name="system/perform_in_parallel",
+                    task_data=json.dumps(extract_values(parallel_goal)),
+                )
+            ]
+        )
+
+        goal = ExecuteTask.Goal(task_name="system/mission", task_data=json.dumps(extract_values(outer_mission_goal)))
+        future = self.execute_task_client.send_goal_async(goal)
+        self._get_response(future, timeout=5)
+
+        self.wait_for_task_start("leaf")
+
+        active_tasks_by_id = {
+            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
+        }
+        outer_mission_id = next(
+            task_id
+            for task_id, task in active_tasks_by_id.items()
+            if task.task_specs.task_name == "system/mission" and task_id != "inner_mission"
+        )
+
+        # The outer mission must still be IN_PROGRESS, not aborted/cancelled by the inner mission's start.
+        self.assertEqual(active_tasks_by_id[outer_mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.assertIn("inner_mission", active_tasks_by_id)
+        self.assertEqual(active_tasks_by_id["inner_mission"].task_details.status, TaskStatus.IN_PROGRESS)
+
+        # Clean up
+        self.execute_cancel_task([outer_mission_id])
 
     def test_cancel_paused_mission(self):
         """Cancelling a paused mission cancels the currently running subtask and the mission status should change to

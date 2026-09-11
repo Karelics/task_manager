@@ -612,11 +612,10 @@ class ServiceTaskClient(TaskClient):
         DONE rather than PAUSED - a Mission blocked on this subtask can then simply continue on to the next step,
         the same as if no pause had been requested. Only a call that outlives the grace period is a real failure.
 
-        :raises PauseTaskFailedError: If the task has already finished, or the service call is still running after
-            cancel_timeout.
+        :raises PauseTaskFailedError: If the service call is still running after cancel_timeout.
         """
         if self._goal_done.is_set():
-            raise PauseTaskFailedError("Cannot pause a task that has already finished.")
+            return
 
         self._node.get_logger().warn(
             f"Currently ongoing service call to {self._task_specs.topic} cannot be paused. "

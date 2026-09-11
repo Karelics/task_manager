@@ -71,7 +71,7 @@ and each exposing `get_task_specs()` so it's treated like any other declared tas
   `CancelTasksService` (`system/cancel_task`, cancel-by-id), `PauseTasksService` / `ResumeTasksService`
   (`system/pause_task` / `system/resume_task`, pause-by-id/resume-by-id; pausing/resuming a Mission or a
   `perform_in_parallel` group by its own task_id redirects to whichever of its children are currently active, via
-  the `ActiveChildrenTracker` protocol/`_resolve_down`/`_find_enclosing_composite`/`_sync_composite_statuses`
+  the `CompositePauseTracker` protocol/`_resolve_down`/`_find_enclosing_composite`/`_sync_composite_statuses`
   helpers), `WaitTask` (`system/wait`, blocking wait/indefinite-wait task).
 - `mission.py` — `Mission` (`system/mission`), runs a list of subtasks sequentially by re-entering
   `TaskManager.execute_task()` per subtask; aborts/cancels the whole mission on subtask failure unless
