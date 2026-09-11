@@ -178,6 +178,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
     start_statuses: Tuple[TaskStatus, ...],
     callback: Callable[[str], bool],
     pause: bool,
+    paused_by: Optional[str] = None,
 ) -> bool:
     """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
@@ -208,7 +209,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
             continue  # Finished on its own - not a failure (matches this function's documented contract).
         if member_status not in start_statuses:
             continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
-        if not callback(member_id):
+        if not callback(member_id, paused_by):
             success = False
 
     _sync_composite_statuses(active_tasks, composites)

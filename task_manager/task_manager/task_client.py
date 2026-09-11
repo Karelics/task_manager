@@ -82,7 +82,7 @@ class TaskClient(ABC):
         """Request canceling the task asynchronously."""
 
     @abstractmethod
-    def pause_task(self) -> None:
+    def pause_task(self, paused_by: Optional[str] = None) -> None:
         """Pause the task synchronously."""
 
     @abstractmethod
@@ -330,7 +330,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
                 )
                 raise CancelTaskFailedError("Couldn't cancel the task!")
 
-    def pause_task(self) -> None:
+    def pause_task(self, paused_by: Optional[str] = None) -> None:
         """Pauses the task by cancelling the underlying action goal, keeping the original goal message stored so that
         resume_task() can restart it later.
 
@@ -370,6 +370,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
         self._pausing = False
         self._paused = True
         self.task_details.status = TaskStatus.PAUSED
+        self.task_details.paused_by = paused_by if paused_by else ""
 
     def resume_task(self) -> None:
         """Resumes a paused task by re-sending the original goal message as a brand-new action goal.
@@ -386,6 +387,7 @@ class ActionTaskClient(TaskClient):  # pylint: disable=too-many-instance-attribu
         self._result_future = None
         try:
             self.start_task_async(self._last_goal_message)
+            self.task_details.paused_by = ""
         except TaskStartError as e:
             # start_task_async() already set status to ERROR, but goal_done is only ever set via the done-callback
             # chain, which nothing else will trigger for a start failure - without this, the task would stay
@@ -604,7 +606,7 @@ class ServiceTaskClient(TaskClient):
             f"Cancel call to service {self._task_specs.topic} is not supported. Ignoring the cancel request."
         )
 
-    def pause_task(self) -> None:
+    def pause_task(self, paused_by: Optional[str] = None) -> None:
         """Services cannot be cancelled mid-flight, so instead of failing immediately, this waits out cancel_timeout for
         the ongoing call to finish naturally.
 
@@ -614,6 +616,7 @@ class ServiceTaskClient(TaskClient):
 
         :raises PauseTaskFailedError: If the service call is still running after cancel_timeout.
         """
+        del paused_by  # To satisfy linters (argument is not used here)
         if self._goal_done.is_set():
             return
 

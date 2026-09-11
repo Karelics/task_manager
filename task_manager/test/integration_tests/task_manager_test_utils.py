@@ -20,7 +20,7 @@ import time
 import unittest
 import uuid
 from asyncio import Future
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # ROS
 import rclpy
@@ -41,7 +41,7 @@ from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask, PerformInParallel, Wait
-from task_manager_msgs.msg import ActiveTaskArray
+from task_manager_msgs.msg import ActiveTask, ActiveTaskArray
 from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTasks
 
 # Task Manager
@@ -106,12 +106,14 @@ class TaskManagerTestNode(unittest.TestCase):
         )
         self._tasks_started = []
         self._task_statuses = {}
+        self._current_active_tasks = {}
 
     def _active_tasks_cb(self, active_tasks_msg) -> None:
         for active_task in active_tasks_msg.active_tasks:
             if active_task.task_id not in self._tasks_started:
                 self._tasks_started.append(active_task.task_id)
             self._task_statuses[active_task.task_id] = active_task.task_status
+            self._current_active_tasks[active_task.task_id] = active_task
 
     def tearDown(self) -> None:
         self.task_manager_node.destroy_node()
@@ -140,6 +142,9 @@ class TaskManagerTestNode(unittest.TestCase):
         while self._task_statuses.get(task_id) != status:
             assert time.time() - start < timeout
             time.sleep(0.01)
+
+    def get_active_tasks(self) -> Dict[str, ActiveTask]:
+        return self._current_active_tasks
 
     def start_fibonacci_action_task(
         self, task_name: str = "fibonacci", run_time_secs: int = 3, task_id: Optional[str] = None
@@ -185,10 +190,12 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def execute_pause_task(self, task_ids: List[str]) -> ExecuteTask.Result:
+    def execute_pause_task(self, task_ids: List[str], paused_by: Optional[str] = None) -> ExecuteTask.Result:
         """Calls system/pause_task with given task IDs."""
         pause_goal = PauseTasks.Request()
         pause_goal.paused_tasks = task_ids
+        if paused_by:
+            pause_goal.paused_by = paused_by
         task_data = json.dumps(extract_values(pause_goal))
         goal = ExecuteTask.Goal(task_name="system/pause_task", task_data=task_data, source="")
         goal_handle = self._start_task(goal=goal)

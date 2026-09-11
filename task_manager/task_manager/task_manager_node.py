@@ -193,8 +193,8 @@ class TaskManager(Node):
             resume_topic = "_" + resume_topic
 
         stop_service = StopTasksService(self, topic=stop_topic, active_tasks=self.active_tasks)
-        mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         wait = WaitTask(self, topic=wait_topic)
+        mission = Mission(self, action_name=mission_topic, execute_task_cb=self.execute_task)
         parallel = ParallelTaskExecutor(
             self,
             topic=parallel_topic,
@@ -346,6 +346,7 @@ class TaskManager(Node):
             task_msg.task_name = task_client.task_specs.task_name
             task_msg.task_status = str(task_client.task_details.status)
             task_msg.source = task_client.task_details.source
+            task_msg.paused_by = task_client.task_details.paused_by
             task_messages.append(task_msg)
         msg = ActiveTaskArray(active_tasks=task_messages)
         self._active_tasks_pub.publish(msg)

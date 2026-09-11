@@ -50,7 +50,7 @@ class Mission(SystemTask, CompositePauseTracker):
         super().__init__()
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
-        self._goal_id_to_subtask_id: Dict[bytes, str] = {}
+        self._subtasks_per_mission: Dict[bytes, str] = {}
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -63,7 +63,7 @@ class Mission(SystemTask, CompositePauseTracker):
     def get_active_children(self, goal_id: bytes) -> List[str]:
         """Returns the mission's active children i.e. its single currently-running subtask or an empty list if that
         mission subtask isn't running (or isn't known)."""
-        current = self._goal_id_to_subtask_id.get(goal_id)
+        current = self._subtasks_per_mission.get(goal_id)
         return [current] if current is not None else []
 
     def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
@@ -92,7 +92,7 @@ class Mission(SystemTask, CompositePauseTracker):
                     goal_handle.canceled()
                     return result
 
-                self._goal_id_to_subtask_id[goal_id] = subtask.task_id
+                self._subtasks_per_mission[goal_id] = subtask.task_id
                 goal = ExecuteTask.Goal(
                     task_id=subtask.task_id, task_name=subtask.task_name, task_data=subtask.task_data, source="Mission"
                 )
@@ -120,7 +120,7 @@ class Mission(SystemTask, CompositePauseTracker):
             goal_handle.succeed()
             return result
         finally:
-            self._goal_id_to_subtask_id.pop(goal_id, None)
+            self._subtasks_per_mission.pop(goal_id, None)
             self._stop_pause_tracking(goal_id)
 
     @staticmethod
