@@ -196,6 +196,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
         if the transition succeeded, False if it failed.
     :param pause: True to arm every composite's own paused flag encountered while resolving down to the leaves,
         False to disarm them - see resolve_down's `paused_flag` parameter.
+    :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
     :raises KeyError: if task_id (or its resolved starting point) is not an active task.
     :return: True if everything succeeded.
     """
