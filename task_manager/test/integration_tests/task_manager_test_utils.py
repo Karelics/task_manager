@@ -144,6 +144,7 @@ class TaskManagerTestNode(unittest.TestCase):
             time.sleep(0.01)
 
     def get_active_tasks(self) -> Dict[str, ActiveTask]:
+        """Returns the current active tasks as a dictionary mapping task IDs to ActiveTask instances."""
         return self._current_active_tasks
 
     def start_fibonacci_action_task(
