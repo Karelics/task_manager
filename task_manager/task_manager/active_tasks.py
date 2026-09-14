@@ -162,6 +162,7 @@ class ActiveTasks:
         :param task_id: ID of the task to pause
         :param publish: If False, skip republishing after pausing - use when the caller has more related changes
             to make (e.g. mirroring the status onto an owning Mission) and will publish once itself afterward.
+        :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
         :raises KeyError: if a task with the given id was not found.
         :raises PauseTaskFailedError: if pausing of the task fails.
         """
