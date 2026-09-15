@@ -173,7 +173,6 @@ class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
         :param goal_handle: Handle of the parallel goal
         :param subtasks: Reference to the list of tasks to wait for.
         """
-        goal_id = bytes(goal_handle.goal_id.uuid)
         while rclpy.ok():
             if goal_handle.is_cancel_requested:
                 self._logger.info("Cancel requested for parallel task.")
@@ -186,17 +185,10 @@ class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
             if self._latest_goal_handle != goal_handle:
                 raise PreemptedException("Parallel task was preempted")
 
-            # While paused, a subtask reaching completion on its own (e.g. a service-backed one that couldn't
-            # actually be paused and simply ran to completion) must not tear down the rest of the group.
-            if not self.is_paused(goal_id):
-                for action in subtasks:
-                    # `has_finished()` is the real completion signal - a paused subtask is neither
-                    # active nor finished, and must not tear the group down.
-                    if action.has_finished():
-                        self._logger.info(
-                            f"Action '{action.name}' finished. The whole parallel action will be cancelled"
-                        )
-                        return
+            for action in subtasks:
+                if action.has_finished():
+                    self._logger.info(f"Action '{action.name}' finished. The whole parallel action will be cancelled")
+                    return
 
             time.sleep(0.1)
 

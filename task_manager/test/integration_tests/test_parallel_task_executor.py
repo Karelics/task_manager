@@ -380,6 +380,29 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         self.execute_cancel_task([parallel_id])
         goal_handle.get_result()
 
+    def test_pause_tears_down_the_sibling_once_the_service_subtask_finishes(self):
+        """Test that pausing a parallel group tears down the sibling once the service subtask finishes."""
+        goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="add", task_name="add_two_ints", task_data='{"a": 0, "b": 1}'),
+            ]
+        )
+        goal_handle = self.run_parallel_tasks(goal)
+        self.wait_for_task_start("fib")
+        self.wait_for_task_start("add")
+        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+
+        pause_response = self.execute_pause_task([parallel_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+
+        self.wait_for_task_status("add", TaskStatus.DONE)
+        self.wait_for_task_status("fib", TaskStatus.CANCELED)
+        self.wait_for_task_status(parallel_id, TaskStatus.DONE)
+
+        result = goal_handle.get_result()
+        self.assertEqual(result.result.task_status, TaskStatus.DONE)
+
     @staticmethod
     def parse_task_results(task_results: str) -> Dict[str, Dict[str, Any]]:
         """Parse the task results from a JSON string to a dictionary with task_id as key and the result as value."""
