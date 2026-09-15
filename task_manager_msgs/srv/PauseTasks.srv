@@ -1,4 +1,5 @@
 string[] paused_tasks               # Task IDs of the active tasks to be paused
+string paused_by                    # The identifier of the entity requesting the pause or reason for pausing
 ---
 bool success                        # Success if all the pauses pass
 string[] successful_pauses          # List of successfully paused tasks

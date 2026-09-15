@@ -180,9 +180,9 @@ class PauseTasksService(SystemTask):
             PauseTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
         )
 
-    def _try_pause(self, task_id: str) -> bool:
+    def _try_pause(self, task_id: str, _paused_by: str | None = None) -> bool:
         try:
-            self._active_tasks.pause_task(task_id, publish=False)
+            self._active_tasks.pause_task(task_id, publish=False, paused_by=_paused_by)
             return True
         except PauseTaskFailedError as e:
             self._node.get_logger().error(f"Failed to pause task with ID {task_id}: {e}")
@@ -201,6 +201,7 @@ class PauseTasksService(SystemTask):
                     (TaskStatus.RECEIVED, TaskStatus.IN_PROGRESS),
                     self._try_pause,
                     pause=True,
+                    paused_by=request.paused_by,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
@@ -254,7 +255,7 @@ class ResumeTasksService(SystemTask):
             ResumeTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
         )
 
-    def _try_resume(self, task_id: str) -> bool:
+    def _try_resume(self, task_id: str, _paused_by: str | None = None) -> bool:
         try:
             self._active_tasks.resume_task(task_id, publish=False)
             return True
