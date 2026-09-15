@@ -198,6 +198,40 @@ class SystemTaskTests(TaskManagerTestNode):
         # The resumed task must still finish normally
         self.assertEqual(goal_handle_1.get_result().result.task_status, TaskStatus.DONE)
 
+    def test_paused_by_handling_on_pause(self):
+        """When paused and if the paused_by information is provided, it should be set in the task details."""
+        _goal_handle = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=1, task_id="111")
+        self.wait_for_task_start("111")
+
+        paused_by = "test_user"
+        pause_response = self.execute_pause_task(task_ids=["111"], paused_by=paused_by)
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        active_tasks = self.get_active_tasks()
+        self.assertIn("111", active_tasks)
+        self.assertEqual(active_tasks["111"].paused_by, paused_by)
+
+        # Cleanup
+        self.execute_cancel_task(task_ids=["111"])
+
+    def test_paused_by_handling_on_resume(self):
+        """On resume, the paused_by information should be cleared."""
+        _goal_handle = self.start_fibonacci_action_task("fibonacci_blocking", run_time_secs=1, task_id="111")
+        self.wait_for_task_start("111")
+
+        paused_by = "test_user"
+        self.execute_pause_task(task_ids=["111"], paused_by=paused_by)
+        self.wait_for_task_status("111", TaskStatus.PAUSED)
+
+        resume_response = self.execute_resume_task(task_ids=["111"])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.wait_for_task_status("111", TaskStatus.DONE)
+
+        active_tasks = self.get_active_tasks()
+        self.assertIn("111", active_tasks)
+        self.assertEqual(active_tasks["111"].paused_by, "")
+
     def test_stop_task(self) -> None:
         """Test cases for Stop system task."""
         with self.subTest("Task with 'cancel_on_stop' field is cancelled"):

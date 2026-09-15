@@ -35,6 +35,7 @@ class TaskDetails:
     task_id: str
     source: str
     status: TaskStatus
+    paused_by: str = field(default="")
 
     # Other public fields (not constructor args)
     result: Optional[Any] = field(default=None, init=False)

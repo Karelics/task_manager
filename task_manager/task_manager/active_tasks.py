@@ -156,17 +156,18 @@ class ActiveTasks:
         task_client = self.get_task_client(task_id)
         task_client.cancel_task()
 
-    def pause_task(self, task_id: str, publish: bool = True) -> None:
+    def pause_task(self, task_id: str, publish: bool = True, paused_by: Optional[str] = None) -> None:
         """Pauses the active task based on task ID.
 
         :param task_id: ID of the task to pause
         :param publish: If False, skip republishing after pausing - use when the caller has more related changes
             to make (e.g. mirroring the status onto an owning Mission) and will publish once itself afterward.
+        :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
         :raises KeyError: if a task with the given id was not found.
         :raises PauseTaskFailedError: if pausing of the task fails.
         """
         task_client = self.get_task_client(task_id)
-        task_client.pause_task()
+        task_client.pause_task(paused_by=paused_by)
         if publish:
             self.publish_active_tasks()  # Republish so the PAUSED status is visible on the active tasks topic
 
