@@ -178,6 +178,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
     start_statuses: Tuple[TaskStatus, ...],
     callback: Callable[[str], bool],
     pause: bool,
+    paused_by: Optional[str] = None,
 ) -> bool:
     """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
@@ -195,6 +196,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
         if the transition succeeded, False if it failed.
     :param pause: True to arm every composite's own paused flag encountered while resolving down to the leaves,
         False to disarm them - see resolve_down's `paused_flag` parameter.
+    :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
     :raises KeyError: if task_id (or its resolved starting point) is not an active task.
     :return: True if everything succeeded.
     """
@@ -208,7 +210,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
             continue  # Finished on its own - not a failure (matches this function's documented contract).
         if member_status not in start_statuses:
             continue  # Already in the target state, or finished on its own - nothing to do, not a failure.
-        if not callback(member_id):
+        if not callback(member_id, paused_by):
             success = False
 
     _sync_composite_statuses(active_tasks, composites)
