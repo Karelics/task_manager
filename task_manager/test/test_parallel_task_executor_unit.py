@@ -157,11 +157,10 @@ def test_request_pause_resume_is_paused_state_transitions(parallel_task_executor
     assert parallel_task_executor.is_paused(goal_id) is False
 
 
-def test_wait_actions_done_ignores_a_finished_member_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
-    """ParallelTask should not tear down if subtask finishes when pausing.
-
-    ParallelTask should restart everything after pause.
-    """
+def test_wait_actions_done_completes_when_the_only_subtask_finished_while_paused(
+    parallel_task_executor: ParallelTaskExecutor,
+) -> None:
+    """Service tasks cannot be paused and should run to completion immediately."""
     goal_id = b"\x03" * 16
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
@@ -178,15 +177,39 @@ def test_wait_actions_done_ignores_a_finished_member_while_paused(parallel_task_
     thread = threading.Thread(target=parallel_task_executor._wait_actions_done, args=(goal_handle, [task]))
     thread.start()
     try:
-        time.sleep(0.3)
-        assert thread.is_alive()  # still waiting - the finished member must not have torn the group down
-
-        parallel_task_executor.request_resume(goal_id)
         thread.join(timeout=2)
         assert not thread.is_alive()
     finally:
         goal_handle.is_active = False
         thread.join(timeout=2)
+
+
+def test_wait_actions_done_tears_down_when_a_member_finishes(
+    parallel_task_executor: ParallelTaskExecutor,
+) -> None:
+    """Test that _wait_actions_done tears down immediately when a member finishes."""
+    goal_id = b"\x06" * 16
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.is_active = True
+    goal_handle.goal_id.uuid = list(goal_id)
+
+    finished_task = make_parallel_task(TaskStatus.DONE, task_id="finished")
+    finished_task._task_client.goal_done = True
+
+    paused_task = make_parallel_task(TaskStatus.PAUSED, task_id="paused")
+    paused_task._task_client.goal_done = False
+
+    parallel_task_executor._latest_goal_handle = goal_handle
+    _register(parallel_task_executor, goal_id)
+    parallel_task_executor.request_pause(goal_id)
+
+    thread = threading.Thread(
+        target=parallel_task_executor._wait_actions_done, args=(goal_handle, [finished_task, paused_task])
+    )
+    thread.start()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
 
 
 def test_wait_actions_done_cancel_still_ends_it_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
