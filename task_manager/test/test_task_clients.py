@@ -127,9 +127,7 @@ class TestActionTaskClient(unittest.TestCase):
         """Cancelling an already-paused task must finish it directly, without touching the (gone) goal handle."""
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        # `_paused` (not the public status) is the source of truth for "this client's own goal was really
-        # cancelled by pause_task()" - see _finish_if_paused()'s docstring for why.
-        task_client._paused = True
+        task_client._pause_state.paused = True
         task_client.task_details.status = TaskStatus.PAUSED
 
         task_client.cancel_task()
@@ -145,7 +143,7 @@ class TestActionTaskClient(unittest.TestCase):
         """
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        task_client._paused = True
+        task_client._pause_state.paused = True
         task_client.task_details.status = TaskStatus.PAUSED
 
         task_client.request_canceling()
@@ -163,7 +161,7 @@ class TestActionTaskClient(unittest.TestCase):
         """
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        task_client.task_details.status = TaskStatus.PAUSED  # forced externally, _paused was never set
+        task_client.task_details.status = TaskStatus.PAUSED  # forced externally, _pause_state.paused was never set
         task_client._goal_handle = Mock(status=GoalStatus.STATUS_EXECUTING)
         task_client._goal_done.set()  # pretend the cancel completed instantly - only the dispatch is under test
 
@@ -201,7 +199,7 @@ class TestActionTaskClient(unittest.TestCase):
         """The Result the server attaches to the pause-cancel must be stored, without any "task done" side effects."""
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        task_client._pausing = True
+        task_client._pause_state.pausing = True
         goal_future = Future(executor=Mock())
         goal_future._result = Fibonacci.Impl.GetResultService.Response(
             status=GoalStatus.STATUS_CANCELED, result=Fibonacci.Result(sequence=[0, 1, 1])
@@ -209,17 +207,17 @@ class TestActionTaskClient(unittest.TestCase):
 
         task_client._goal_done_cb(goal_future)
 
-        self.assertTrue(task_client._pause_done.is_set())
+        self.assertTrue(task_client._pause_state.pause_done.is_set())
         self.assertFalse(self.cb_called)
         self.assertFalse(task_client.goal_done)
-        self.assertEqual(len(task_client._paused_results), 1)
-        self.assertEqual(extract_values(task_client._paused_results[0]), {"sequence": [0, 1, 1]})
+        self.assertEqual(len(task_client._pause_state.paused_results), 1)
+        self.assertEqual(extract_values(task_client._pause_state.paused_results[0]), {"sequence": [0, 1, 1]})
 
     def test_final_result_concatenates_paused_segments(self):
         """Fields listed in result_concat_fields are concatenated across paused segments and the final segment, in
         chronological order."""
         task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
-        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
+        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
         goal_future = Future(executor=Mock())
         goal_future._result = Fibonacci.Impl.GetResultService.Response(
             status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
@@ -234,7 +232,7 @@ class TestActionTaskClient(unittest.TestCase):
     def test_final_result_without_concat_fields_keeps_final_segment_only(self):
         """With no result_concat_fields configured, paused segments' results are discarded as before."""
         task_client = get_concat_action_task_client(result_concat_fields=[])
-        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1])]
         goal_future = Future(executor=Mock())
         goal_future._result = Fibonacci.Impl.GetResultService.Response(
             status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
@@ -247,7 +245,7 @@ class TestActionTaskClient(unittest.TestCase):
     def test_final_result_skips_bad_concat_field(self):
         """A configured field that can't be concatenated is skipped without breaking the rest of the result."""
         task_client = get_concat_action_task_client(result_concat_fields=["no_such_field", "sequence"])
-        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1])]
         goal_future = Future(executor=Mock())
         goal_future._result = Fibonacci.Impl.GetResultService.Response(
             status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
@@ -261,9 +259,9 @@ class TestActionTaskClient(unittest.TestCase):
     def test_cancel_while_paused_reports_merged_paused_segments(self):
         """Cancelling a paused task must report the merged partial results instead of an empty Result."""
         task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
-        task_client._paused = True
+        task_client._pause_state.paused = True
         task_client.task_details.status = TaskStatus.PAUSED
-        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
+        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
 
         task_client.cancel_task()
 
@@ -273,8 +271,8 @@ class TestActionTaskClient(unittest.TestCase):
     def test_resume_failure_reports_merged_paused_segments(self):
         """A paused task whose restart fails must still report the merged partial results."""
         task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
-        task_client._paused = True
-        task_client._paused_results = [Fibonacci.Result(sequence=[0, 1])]
+        task_client._pause_state.paused = True
+        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1])]
 
         with patch.object(ActionTaskClient, "start_task_async", side_effect=TaskStartError("server gone")):
             self.assertRaises(ResumeTaskFailedError, task_client.resume_task)
