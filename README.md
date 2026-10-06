@@ -116,9 +116,9 @@ A paused task:
 
 **Service-backed tasks.** ROS services cannot be cancelled mid-flight, so pausing one waits up to the task's `cancel_timeout` for the call to finish naturally. If it finishes within that time, the pause is reported as successful (even though the task ended up `DONE` rather than `PAUSED`). Only a call that takes longer is reported as a failed pause.
 
-**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is resumed, so pausing during a service-backed subtask, it lets that subtask finish and then holds the Mission before the next one. Composite tasks can be nested (e.g. a parallel task inside a Mission) and are handled the same way at any depth.
+**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth.
 
-Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs, but the tasks that did succeed are not rolled back.
+Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs. The succeeded parts of the failed operation are not rolled back.
 
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
