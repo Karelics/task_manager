@@ -2,10 +2,11 @@
 
 Task Manager ROS 2 package is a solution to start, handle and track tasks from multiple different sources in a centralized way on a single robot. If you want to:
 - have an easy way to start new tasks from any local or web source: UI, voice control, command line, etc.
-- track all the currently active tasks and their end results on your robot,
-- automatically cancel the previous task if a new conflicting one is given,
-- combine multiple smaller tasks into a Mission,
-- implement custom behavior for example on task start and end,
+- track all the currently active tasks and their end results on your robot
+- automatically cancel the previous task if a new conflicting one is given
+- combine multiple smaller tasks into a Mission, or run them in parallel
+- pause and resume tasks, including whole Missions
+- implement custom behavior for example on task start and end
 
 Task Manager is your solution!
 
@@ -20,11 +21,11 @@ Task Manager is your solution!
 2. [Active tasks](#active-tasks)
 3. [Result tracking](#result-tracking)
 4. [Missions](#missions)
-4. [Parallel Tasks](#parallel-tasks)
-5. [Task Cancelling](#task-cancelling)
-6. [Task Pausing](#task-pausing)
-7. [Global STOP-task](#stop)
-8. [Wait task](#wait)
+5. [Parallel Tasks](#parallel-tasks)
+6. [Task Cancelling](#task-cancelling)
+7. [Task Pausing](#task-pausing)
+8. [Global STOP-task](#stop)
+9. [Wait task](#wait)
 
 
 ### Tasks <a name="tasks"></a>
@@ -49,7 +50,7 @@ Note that the `task_data` is the json-formatted version of the action or service
 Tasks provide their end status with the `task_status` field in the result using [TaskStatus](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/msg/TaskStatus.msg) enumeration.
 
 ### Active tasks list <a name="active-tasks"></a>
-It is possible to track all the currently active tasks that have their status as `IN_PROGRESS` by subscribing to `/task_manager/active_tasks` topic. The task's end status is also published to this topic just before the task is removed from the list.
+It is possible to track all the currently active tasks that have their status as `IN_PROGRESS` or `PAUSED` by subscribing to `/task_manager/active_tasks` topic. The task's end status is also published to this topic just before the task is removed from the list.
 
 Active tasks list can be useful for example to:
 - display all the currently active tasks on the robot in the UI,
@@ -91,18 +92,33 @@ Parallel tasks provide a way to run tasks which depend on each other in a way th
 
 Example use cases might be running navigation and video recording as a ParallelTask. When the navigation goal is reached and navigation task finishes, that will cause the video recording task to finish as well.
 
-ParallelTasks can be started by calling `system/perform_in_parallel`
+ParallelTasks can be started by calling `system/perform_in_parallel`. Its result lists the end status of every subtask.
+
+When cancelling the remaining tasks, Task Manager waits up to `parallel_executor_task.cancel_timeout` seconds for them to finish. A task that is known to take longer to react to a cancel can set `require_finish_on_parallel_cancel: False`. This will allow the task to continue running after parallel task has been cancelled without setting the whole parallel task to error status.
 
 
 ### Task Cancelling <a name="task-cancelling"></a>
-Tasks can be cancelled by calling a `system/cancel_tasks` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
+Tasks can be cancelled by calling a `system/cancel_task` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
 
 Tasks that are implemented using ROS Services cannot be cancelled due to their nature. Trying to cancel such a task will make Task Manager wait for a predefined time for the task to finish and return an `ERROR` status if it doesn't.
 
-### Task Pausing <a name="task-pausing"></a>
-Tasks can be paused and resumed by calling `system/pause_task` / `system/resume_task` with the Task IDs. A paused task gets the status `PAUSED`, stays visible in `/task_manager/active_tasks`, and is excluded from the blocking-task check — so a new blocking task can start while another one sits paused.
+Cancelling a paused task finishes it right away with the `CANCELED` status.
 
-Since ROS 2 actions have no native pause mechanism, pausing an action-backed task actually cancels its underlying goal right now, remembering the original goal data. Resuming re-sends that same goal as a brand-new one, i.e. execution restarts from scratch rather than continuing where it left off. The partial result the action server returns with each pause-cancel is kept: fields listed in the task's `result_concat_fields` parameter are concatenated across all paused segments into the task's final result, while unlisted fields keep only the final segment's value. ROS Services cannot be cancelled mid-flight, so pausing one instead waits out the task's `cancel_timeout` for the call to finish naturally: if it finishes within that grace period the pause is reported as successful (even though the task actually ended up `DONE` rather than `PAUSED`), and only a call that outlives the grace period is reported as a failed pause.
+### Task Pausing <a name="task-pausing"></a>
+Tasks can be paused and resumed by calling `system/pause_task` / `system/resume_task` with the Task IDs. The pause request can also carry a `paused_by` string, for example the name of the pausing entity or the reason for the pause, which is shown in `/task_manager/active_tasks` while the task stays paused.
+
+A paused task:
+- gets the status `PAUSED` and stays visible in `/task_manager/active_tasks`,
+- is excluded from the blocking-task check, so a new blocking task can start while another one sits paused,
+- can still be cancelled with `system/cancel_task` or `system/stop`, which finishes it as `CANCELED`.
+
+**Action-backed tasks.** ROS 2 actions have no native pause mechanism, so pausing an action-backed task cancels its underlying goal, remembering the original goal data. Resuming sends that same goal again as a new one, i.e. execution restarts from scratch rather than continuing where it left off. The partial result the action server returns on each pause is kept: fields listed in the task's `result_concat_fields` parameter are concatenated across all paused segments into the task's final result, while unlisted fields keep only the final segment's value.
+
+**Service-backed tasks.** ROS services cannot be cancelled mid-flight, so pausing one waits up to the task's `cancel_timeout` for the call to finish naturally. If it finishes within that time, the pause is reported as successful (even though the task ended up `DONE` rather than `PAUSED`). Only a call that takes longer is reported as a failed pause.
+
+**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth.
+
+Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs. The succeeded parts of the failed operation are not rolled back.
 
 ### Global STOP-task <a name="stop"></a>
 Task manager provides a `system/stop` task, which can be called to stop all the active tasks that have their parameter `cancel_on_stop` set to `True`.
@@ -145,8 +161,9 @@ The following tasks are available by default from the Task Manager
 | Task name          | Description                                                                                                   | Message interface                                                                                       |
 |--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
+| system/perform_in_parallel | Runs the given tasks in parallel. When one of them finishes, the others are cancelled.                | [PerformInParallel](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/PerformInParallel.action) |
 | system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
-| system/pause_task  | Pauses the given tasks by Task ID.                                                                            | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
+| system/pause_task  | Pauses the given tasks by Task ID. Optionally records who paused them in `paused_by`.                                                                       | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
 | system/resume_task | Resumes the given previously paused tasks by Task ID.                                                         | [ResumeTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/ResumeTasks.srv) |
 | system/stop        | Cancels all the active tasks that have `cancel_on_stop` parameter set to `True`.                              | [StopTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/StopTasks.srv)     |
 | system/wait | A blocking task which waits for a given time (`duration > 0.0`) or until it is cancelled (`duration <= 0.0`). | [Wait](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Wait.action)
@@ -163,8 +180,12 @@ The following tasks are available by default from the Task Manager
 | \<task>.cancel_on_stop        | bool     | False   | Whether the task should be cancelled when "STOP" task is executed.                                                                                                                                                                                                                                                                                                                                                                |
 | \<task>.reentrant             | bool     | False   | Allows executing multiple goals for the same task in parallel. Note that the service or action implementing the task logic should also use a reentrant callback group for enabling of this option to make sense.                                                                                                                                                                                                                  |
 | \<task>.service_success_field | string   | ""      | A usual way for ROS services is to provide their successful execution status for example with the "success" field in the response message. Specify here the name of this field if you wish your task to automatically set its status to ERROR when this field value is `False`. If left empty, the task will always finish with DONE status. <br/><br/> Note: Works only for the tasks that implement their logic with a service. |
-| \<task>.cancel_timeout        | float    | 5.0     | Time, in seconds, to wait when cancelling an ongoing task. If the time is exceeded before the cancelling is done, the task will fail.                                                                                                                                                                                                                                                                                             |
+| \<task>.cancel_timeout        | float    | `default_cancel_timeout` | Time, in seconds, to wait when cancelling or pausing an ongoing task. If the time is exceeded before the cancelling is done, the task will fail.                                                                                                                                                                                                                                                                                             |
+| \<task>.cancel_reported_as_success | bool | False   | Report the task's end status as `DONE` instead of `CANCELED` when it is cancelled. Useful for continuous tasks, such as video recording, that are stopped by cancelling them.                                                                                                                                                                                                                                                       |
+| \<task>.require_finish_on_parallel_cancel | bool | True | When run inside `system/perform_in_parallel`, whether the task is required to finish within `parallel_executor_task.cancel_timeout` after being cancelled. If False, the task still running after the timeout does not fail the parallel task.                                                                                                                                                                       |
 | \<task>.result_concat_fields  | string[] | []      | Action result fields (sequences or strings) whose partial values, returned by the server each time the task is paused, are concatenated in chronological order into the task's final result. Fields not listed keep only the value from the final (post-resume) goal. <br/><br/> Note: Works only for the tasks that implement their logic with an action, and requires the action server to fill in its partial result when its goal is cancelled. |
+| default_cancel_timeout        | float    | 5.0     | Default value for `<task>.cancel_timeout` for tasks that don't set it.                                                                                                                                                                                                                                                                                                                                                            |
+| parallel_executor_task.cancel_timeout | float | 5.0 | Time, in seconds, that `system/perform_in_parallel` waits for the remaining tasks to finish after cancelling them.                                                                                                                                                                                                                                                                                                       |
 | enable_task_servers           | bool     | False   | Creates new service and action topics for all the declared tasks under `/task_manager/task/<task_name>` topic, to allow easy task calling from the CLI using the ROS message interfaces instead of JSON format. Should be used for debugging and development purposes only, since the preferred task starting method through `/task_manager/execute_task` action topic allows user to also set Task ID and source.                |
 The parameters that have their default as "-" are mandatory.
 
@@ -195,7 +216,6 @@ ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_m
 
 The following features are planned as future enhancements for Task Manager:
 - Task scheduling
-- Task pausing and resuming
 - Feedback topic for tasks
 - Timestamps, for tracking task start and end times
 
