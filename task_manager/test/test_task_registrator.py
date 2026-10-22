@@ -23,6 +23,7 @@ from example_interfaces.action import Fibonacci
 
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask
+from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
@@ -68,6 +69,32 @@ class TestTaskRegistrator(unittest.TestCase):
 
         with self.assertRaises(DuplicateTaskIdException):
             self.task_registrator.start_new_task(start_task_request, self.task_specs)
+
+    def test_start_task_of_same_type_cancels_running_task(self):
+        """Starting a non-reentrant task cancels an already running task of the same type."""
+        request = ExecuteTask.Goal(task_id="111", task_name="fibonacci", task_data='{"order": 5}', source="")
+        running_task = self.task_registrator.start_new_task(request, self.task_specs)
+        running_task.task_details.status = TaskStatus.IN_PROGRESS
+
+        with mock.patch.object(running_task, "cancel_task") as mock_cancel_task:
+            request = ExecuteTask.Goal(task_id="222", task_name="fibonacci", task_data='{"order": 5}', source="")
+            self.task_registrator.start_new_task(request, self.task_specs)
+
+        mock_cancel_task.assert_called_once()
+
+    def test_start_task_of_same_type_does_not_cancel_paused_task(self):
+        """Starting a non-reentrant task leaves a paused task of the same type untouched, so it can be resumed later."""
+        request = ExecuteTask.Goal(task_id="111", task_name="fibonacci", task_data='{"order": 5}', source="")
+        paused_task = self.task_registrator.start_new_task(request, self.task_specs)
+        paused_task.task_details.status = TaskStatus.PAUSED
+
+        with mock.patch.object(paused_task, "cancel_task") as mock_cancel_task:
+            request = ExecuteTask.Goal(task_id="222", task_name="fibonacci", task_data='{"order": 5}', source="")
+            new_task = self.task_registrator.start_new_task(request, self.task_specs)
+
+        mock_cancel_task.assert_not_called()
+        self.assertEqual(paused_task.task_details.status, TaskStatus.PAUSED)
+        self.assertCountEqual(self.active_tasks.get_active_tasks(), [paused_task, new_task])
 
     def test_populate_msg_with_invalid_data(self):
         """Checks that parsing invalid task_data (json-formatted ROS Msg) is handled correctly."""
