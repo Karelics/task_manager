@@ -151,7 +151,11 @@ class TaskRegistrator:
 
         :raises TaskStartError: If fails to cancel the previous task
         """
-        active_task_clients = self._active_tasks.get_active_tasks_by_name(task_name)
+        active_clients_with_paused = self._active_tasks.get_active_tasks_by_name(task_name)
+        # We do not want to cancel the PAUSED tasks
+        active_task_clients = [
+            task_cli for task_cli in active_clients_with_paused if task_cli.task_details.status != TaskStatus.PAUSED
+        ]
         if not active_task_clients:
             return
         self._node.get_logger().info(f"Detected running task of the same type '{task_name}', canceling it.")
