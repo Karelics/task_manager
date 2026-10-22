@@ -28,6 +28,7 @@ from task_manager_msgs.action import Mission as MissionAction
 from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
 from task_manager.tasks.system_tasks import SystemTask
@@ -55,7 +56,7 @@ class Mission(SystemTask, CompositePauseTracker):
             node=node,
             action_type=MissionAction,
             action_name=action_name,
-            execute_callback=self.execute_cb,
+            execute_callback=run_in_own_thread(self.execute_cb),
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
         )
