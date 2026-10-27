@@ -23,6 +23,7 @@ from example_interfaces.action import Fibonacci
 
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask
+from task_manager_msgs.srv import StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
@@ -81,6 +82,11 @@ class TestTaskRegistrator(unittest.TestCase):
                 with self.assertRaises(ROSGoalParsingError) as context:
                     populate_msg(test["task_data"], Fibonacci.Goal())
                     self.assertTrue("Unable to parse task data" in context.exception)
+
+    def test_populate_msg_with_empty_data(self):
+        """Check that empty task_data is handled correctly."""
+        result = populate_msg(task_data="", msg_interface=StopTasks.Request())
+        self.assertEqual(type(result), type(StopTasks.Request()))
 
     def test_populate_msg_with_extra_data_fields(self):
         """Check that extra fields in task_data are ignored."""
