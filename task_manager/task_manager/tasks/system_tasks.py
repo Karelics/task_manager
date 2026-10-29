@@ -33,6 +33,7 @@ from task_manager_msgs.srv import CancelTasks, PauseTasks, ResumeTasks, StopTask
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
@@ -317,7 +318,7 @@ class WaitTask(SystemTask):  # pylint: disable=too-few-public-methods
             self._node,
             Wait,
             self._topic,
-            self._execute_cb,
+            run_in_own_thread(self._execute_cb),
             cancel_callback=self._cancel_cb,
             callback_group=MutuallyExclusiveCallbackGroup(),
         )

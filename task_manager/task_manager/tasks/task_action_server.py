@@ -29,6 +29,7 @@ from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_specs import TaskSpecs
 
 # pylint: disable=too-few-public-methods
@@ -51,7 +52,7 @@ class TaskActionServer:
             node=node,
             action_type=task_specs.msg_interface,
             action_name=f"{task_topic_prefix}/{task_specs.task_name}",
-            execute_callback=self._execute_cb,
+            execute_callback=run_in_own_thread(self._execute_cb),
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
         )

@@ -59,6 +59,10 @@ TASK_TOPIC_PREFIX = "/test/task"
 class TaskManagerTestNode(unittest.TestCase):
     """Sets up a spinning node and test tasks for the tests that require them."""
 
+    # num_threads defaults to CPU core count. In GitHub Action pipelines, there are only 2 CPU cores available,
+    # causing ROS messages to hang during the tests due to insufficient amount of maximum threads.
+    EXECUTOR_NUM_THREADS = 10
+
     def setUp(self) -> None:
         rclpy.init()
         # Before starting task nodes, override the default ROS topic to not interfere with the normal ones
@@ -82,9 +86,7 @@ class TaskManagerTestNode(unittest.TestCase):
 
         self.test_tasks_node = TestTasksNode()
 
-        # num_threads defaults to CPU core count. In GitHub Action pipelines, there are only 2 CPU cores available,
-        # causing ROS messages to hang during the tests due to insufficient amount of maximum threads.
-        self.executor = MultiThreadedExecutor(num_threads=10)
+        self.executor = MultiThreadedExecutor(num_threads=self.EXECUTOR_NUM_THREADS)
 
         self.executor.add_node(self.task_manager_node)
         self.executor.add_node(self.test_tasks_node)
