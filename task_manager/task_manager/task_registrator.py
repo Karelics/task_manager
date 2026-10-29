@@ -178,7 +178,7 @@ def populate_msg(task_data: str, msg_interface: Any):
     :raises ROSGoalParsingError: If message parsing fails
     """
     try:
-        task_data = json.loads(task_data)
+        task_data = json.loads(task_data or "{}")
     except ValueError as e:
         raise ROSGoalParsingError(f"Invalid JSON format: Couldn't parse task data to json: '{task_data}'") from e
 
