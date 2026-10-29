@@ -152,6 +152,9 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         )
 
         goal_handle = self.run_parallel_tasks(goal)
+        # Stop only cancels tasks that are active when it arrives, so make sure the subtasks have started
+        self.wait_for_task_start("fib")
+        self.wait_for_task_start("wait")
         stop_result = self.execute_stop_task()
         result = goal_handle.get_result()
 

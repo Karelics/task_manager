@@ -62,8 +62,9 @@ class SystemTaskTests(TaskManagerTestNode):
     def test_cancel_non_cancelable_task(self) -> None:
         """Test trying to cancel a task that cannot be canceled."""
         self.task_manager_node.task_registrator.cancel_task_timeout = 0.1
+        # Long enough for the cancel response to arrive before the goal finishes, even on a slow executor
         goal_handle = self.start_fibonacci_action_task(
-            task_name="fibonacci_non_cancelable", run_time_secs=1, task_id="111"
+            task_name="fibonacci_non_cancelable", run_time_secs=3, task_id="111"
         )
         self.wait_for_task_start("111")
         cancel_response = self.execute_cancel_task(task_ids=["111"])
