@@ -43,6 +43,7 @@ from task_manager_msgs.msg import ActiveTask, ActiveTaskArray, TaskDoneResult, T
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_client import CancelTaskFailedError, TaskClient, TaskStartError
 from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
@@ -88,7 +89,7 @@ class TaskManager(Node):
             node=self,
             action_type=ExecuteTask,
             action_name="/task_manager/execute_task",
-            execute_callback=self._execute_task_action_cb,
+            execute_callback=run_in_own_thread(self._execute_task_action_cb),
             cancel_callback=self._cancel_cb,
             callback_group=ReentrantCallbackGroup(),
         )

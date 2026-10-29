@@ -28,6 +28,7 @@ from task_manager_msgs.action import ExecuteTask, PerformInParallel
 from task_manager_msgs.msg import SubtaskResult, TaskStatus
 
 # Task Manager
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_client import CancelTaskFailedError, TaskClient
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
@@ -60,7 +61,7 @@ class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
             self._node,
             PerformInParallel,
             action_name=topic,
-            execute_callback=self._execute_cb,
+            execute_callback=run_in_own_thread(self._execute_cb),
             cancel_callback=self._cancel_cb,
             handle_accepted_callback=self._handle_accepted_cb,
         )

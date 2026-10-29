@@ -29,6 +29,7 @@ from task_manager_msgs.action import ExecuteTask
 
 # Task Manager
 # Current package
+from task_manager.own_thread import run_in_own_thread
 from task_manager.task_specs import TaskSpecs
 
 # pylint: disable=too-few-public-methods
@@ -50,7 +51,7 @@ class TaskServiceServer:
         node.create_service(
             task_specs.msg_interface,
             f"{task_topic_prefix}/{task_specs.task_name}",
-            callback=self.service_callback,
+            callback=run_in_own_thread(self.service_callback),
             callback_group=ReentrantCallbackGroup(),
         )
 
