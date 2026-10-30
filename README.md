@@ -22,10 +22,11 @@ Task Manager is your solution!
 3. [Result tracking](#result-tracking)
 4. [Missions](#missions)
 5. [Parallel Tasks](#parallel-tasks)
-6. [Task Cancelling](#task-cancelling)
-7. [Task Pausing](#task-pausing)
-8. [Global STOP-task](#stop)
-9. [Wait task](#wait)
+6. [Containers](#containers)
+7. [Task Cancelling](#task-cancelling)
+8. [Task Pausing](#task-pausing)
+9. [Global STOP-task](#stop)
+10. [Wait task](#wait)
 
 
 ### Tasks <a name="tasks"></a>
@@ -96,6 +97,12 @@ ParallelTasks can be started by calling `system/perform_in_parallel`. Its result
 
 When cancelling the remaining tasks, Task Manager waits up to `parallel_executor_task.cancel_timeout` seconds for them to finish. A task that is known to take longer to react to a cancel can set `require_finish_on_parallel_cancel: False`. This will allow the task to continue running after parallel task has been cancelled without setting the whole parallel task to error status.
 
+### Containers <a name="containers"></a>
+A Container runs its subtasks sequentially, like a Mission, but is paused and resumed as a single unit and always restarts from its first subtask when resumed. Use it for groups of tasks where a step relies on the previous one having just been completed, for example navigating to a location and then performing a task there: if the robot is moved while the task is paused, resuming the container navigates back before the task is restarted.
+
+Containers are typically used as Mission subtasks, `Mission[Container[navigate_A, task_x], Container[navigate_B, task_y]]`, and can be started by calling `system/container`. Its result lists the end status of every subtask of the last run, and `allow_skipping` works the same as in a Mission.
+
+Pausing the container by its own Task ID, by the Task ID of the Mission it runs in, or by the Task ID of any task running inside it (at any depth), pauses the whole outermost container: its running subtask is cancelled and the container gets the `PAUSED` status. Since the cancelled subtask is no longer active, resume the container by its own Task ID or by the Mission's. A pause can only complete once the running subtask has been cancelled, so the container's cancel timeout is derived from the longest `cancel_timeout` of all declared tasks. Subtasks are therefore preferably action-backed, and must be safe to run again from scratch.
 
 ### Task Cancelling <a name="task-cancelling"></a>
 Tasks can be cancelled by calling a `system/cancel_task` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
@@ -116,7 +123,7 @@ A paused task:
 
 **Service-backed tasks.** ROS services cannot be cancelled mid-flight, so pausing one waits up to the task's `cancel_timeout` for the call to finish naturally. If it finishes within that time, the pause is reported as successful (even though the task ended up `DONE` rather than `PAUSED`). Only a call that takes longer is reported as a failed pause.
 
-**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth.
+**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth. [Containers](#containers) are the exception: they are paused as a whole and restart from their first subtask when resumed.
 
 Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs. The succeeded parts of the failed operation are not rolled back.
 
@@ -162,6 +169,7 @@ The following tasks are available by default from the Task Manager
 |--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
 | system/perform_in_parallel | Runs the given tasks in parallel. When one of them finishes, the others are cancelled.                | [PerformInParallel](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/PerformInParallel.action) |
+| system/container   | Runs the given tasks sequentially, paused and resumed as one unit that restarts from its first task.          | [Container](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Container.action) |
 | system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
 | system/pause_task  | Pauses the given tasks by Task ID. Optionally records who paused them in `paused_by`.                                                                       | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
 | system/resume_task | Resumes the given previously paused tasks by Task ID.                                                         | [ResumeTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/ResumeTasks.srv) |

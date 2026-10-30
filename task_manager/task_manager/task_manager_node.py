@@ -48,6 +48,7 @@ from task_manager.task_client import CancelTaskFailedError, TaskClient, TaskStar
 from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
 from task_manager.task_specs import TaskServerType, TaskSpecs
+from task_manager.tasks.container import Container
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 from task_manager.tasks.system_tasks import (
@@ -184,6 +185,7 @@ class TaskManager(Node):
         mission_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/mission"
         wait_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/wait"
         parallel_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/perform_in_parallel"
+        container_topic = f"{self.task_registrator.TASK_TOPIC_PREFIX}/system/container"
 
         if not self._enable_task_servers:
             # Make services hidden. Actions cannot be hidden in a same way as services are,
@@ -202,15 +204,17 @@ class TaskManager(Node):
             prepare_execute_task_result_cb=self._prepare_execute_task_result,
             start_single_task_cb=self._start_single_task,
         )
+        container = Container(self, action_name=container_topic, execute_task_cb=self.execute_task)
         composites = {"system/mission": mission, "system/perform_in_parallel": parallel}
+        units = {"system/container": container}
         cancel_service = CancelTasksService(
             self, topic=cancel_topic, active_tasks=self.active_tasks, composites=composites
         )
         pause_service = PauseTasksService(
-            self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites
+            self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites, units=units
         )
         resume_service = ResumeTasksService(
-            self, topic=resume_topic, active_tasks=self.active_tasks, composites=composites
+            self, topic=resume_topic, active_tasks=self.active_tasks, composites=composites, units=units
         )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
@@ -220,6 +224,22 @@ class TaskManager(Node):
         self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
         self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)
+        self.known_tasks["system/container"] = container.get_task_specs(
+            container_topic, cancel_timeout=self._container_cancel_timeout()
+        )
+
+    def _container_cancel_timeout(self) -> float:
+        """Cancel timeout for system/container: pausing/cancelling a container only completes once its running subtask
+        has been cancelled, so it must exceed the cancel timeout of any task it may run.
+
+        Otherwise a pause could time out, and the subtask's late cancellation would be taken as the container genuinely
+        finishing, aborting any mission it runs in.
+        """
+        margin = 1.0
+        longest = max(
+            (specs.cancel_timeout for specs in self.known_tasks.values()), default=self._default_cancel_timeout
+        )
+        return longest + margin
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request

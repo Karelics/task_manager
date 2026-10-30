@@ -1,0 +1,853 @@
+= Design: `system/container` — Restart-on-Resume Task Groups
+:toc: left
+:toclevels: 2
+:sectnums:
+:source-highlighter: rouge
+:revdate: 2026-10-30
+:status: Draft
+
+[abstract]
+Add a new system task, `system/container`, that runs a short list of subtasks in order and is paused and resumed
+*as one unit*. Resuming a paused container reruns it from its first subtask, so a `navigate_to_coordinates` +
+`task_x` pair always navigates again before `task_x` restarts.
+
+== Problem
+
+A typical mission is a chain of pairs, where each work task depends on the navigation step before it:
+
+----
+Mission[ nav_A, task_x, nav_B, task_y, ... ]
+----
+
+Pausing a mission today pauses only the subtask that is currently running. Pausing an action-backed task cancels
+its goal and stores the goal message; resuming re-sends the same goal (`ActionTaskClient.pause_task()` /
+`resume_task()` in `task_client.py`).
+
+Two failure cases:
+
+. `task_x` is paused, the robot is moved (teleop, pushed, another task), then resumed. The same `task_x` goal is
+  re-sent and executed at the robot's *new* position.
+. The mission is paused in the gap after `nav_A` finished and before `task_x` started
+  (`Mission._wait_until_resumed`). Resume starts `task_x` without navigating.
+
+.Today: resuming re-sends `task_x` at the wrong place
+[plantuml, current-pause-flow, svg]
+----
+@startuml
+skinparam sequenceMessageAlign center
+actor Operator
+participant "PauseTasksService /\nResumeTasksService" as Svc
+participant "Mission\n(execute_cb)" as Mission
+participant "ActionTaskClient\n(task_x)" as Client
+participant "task_x\naction server" as Server
+participant Robot
+
+Mission -> Client : start task_x (after nav_A DONE)
+Client -> Server : send goal
+== Pause ==
+Operator -> Svc : pause(mission_id)
+Svc -> Svc : resolve_down(mission) -> [task_x]
+Svc -> Client : pause_task()
+Client -> Server : cancel goal
+Server --> Client : CANCELED (done cb suppressed)
+Client -> Client : status = PAUSED\nstore goal msg
+== While paused ==
+Operator -> Robot : moves robot elsewhere
+== Resume ==
+Operator -> Svc : resume(mission_id)
+Svc -> Client : resume_task()
+Client -> Server : re-send SAME goal
+Server -> Robot : performs task_x\n**at wrong position**
+@enduml
+----
+
+== Goals and non-goals
+
+.Goals
+* A group of subtasks that depend on the previous step restarts from its first step after any pause.
+* Pausing behaves the same whether the request names the outer mission, the container, or the running child.
+  Resuming names the container or the mission (the paused child no longer exists, see <<_edge_cases_and_behaviour_notes>>).
+* Opt-in per group: subtasks outside a container keep today's resume-in-place behaviour.
+* No change to `Mission`, `Mission.action` or `SubtaskGoal` semantics for existing users.
+
+.Non-goals
+* Skipping already-finished steps on resume (e.g. detecting whether the robot moved). Always rerun from step 0;
+  navigating to where the robot already is costs little.
+* Pausing at a finer grain inside a container. A container is paused only as a whole.
+* Persisting container progress across TaskManager restarts.
+
+== Proposed design
+
+=== Concept
+
+A container is a *pause leaf*. The pause/resume services never descend into it. Pausing a container uses the
+existing `ActionTaskClient.pause_task()` on the container's own goal:
+
+. Cancel the container goal -> container's `execute_cb` cancels its current child and returns `canceled()`.
+. Client marks the container `PAUSED` and stores the container goal message.
+. Resume re-sends the container goal -> `execute_cb` runs again from subtask 0 (navigate first).
+
+Nothing new is needed for the restart itself; it falls out of the current cancel-and-resend pause model.
+
+=== Usage
+
+[source,json]
+----
+{
+  "task_name": "system/mission",
+  "task_data": {
+    "subtasks": [
+      {"task_name": "system/container", "task_data": "{\"subtasks\": [
+          {\"task_name\": \"navigate_to_coordinates\", \"task_data\": \"{...A...}\"},
+          {\"task_name\": \"task_x\", \"task_data\": \"{...}\"}]}"},
+      {"task_name": "system/container", "task_data": "{\"subtasks\": [
+          {\"task_name\": \"navigate_to_coordinates\", \"task_data\": \"{...B...}\"},
+          {\"task_name\": \"task_y\", \"task_data\": \"{...}\"}]}"}
+    ]
+  }
+}
+----
+
+(Line breaks inside the JSON strings are for readability only.)
+
+.Task tree: Mission of Containers
+[plantuml, container-structure, svg]
+----
+@startuml
+skinparam rectangle {
+  RoundCorner 10
+}
+rectangle "system/mission\n(CompositePauseTracker: pause descends)" as M {
+  rectangle "system/container #1\n(pause leaf: pause stops here)" as C1 #E3F2FD {
+    rectangle "navigate_to_coordinates (A)" as N1
+    rectangle "task_x" as X
+    N1 -right-> X
+  }
+  rectangle "system/container #2\n(pause leaf: pause stops here)" as C2 #E3F2FD {
+    rectangle "navigate_to_coordinates (B)" as N2
+    rectangle "task_y" as Y
+    N2 -right-> Y
+  }
+  C1 -down-> C2
+}
+note right of C1
+  On resume the whole container
+  goal is re-sent -> runs nav again
+  before task_x.
+end note
+@enduml
+----
+
+=== Interface
+
+New action `task_manager_msgs/action/Container.action`, reusing the Mission message types:
+
+----
+SubtaskGoal[] subtasks
+---
+SubtaskResult[] results
+---
+----
+
+`allow_skipping` on a `SubtaskGoal` keeps its Mission meaning: a failed skippable step does not abort the container.
+
+Task specs:
+
+[cols="1,1,3"]
+|===
+|Field |Value |Reason
+
+|`task_name` |`system/container` |
+|`blocking` |`False` |Same as Mission; blocking-ness comes from children.
+|`cancel_on_stop` |`True` |`system/stop` cancels it and, through it, the running child.
+|`reentrant` |`True` |Sibling or nested containers must not cancel each other as same-type duplicates.
+|`task_server_type` |`ACTION` |Pause = cancel goal, resume = re-send goal.
+|`cancel_timeout` |max of all declared tasks' `cancel_timeout` + margin |Must exceed the child's cancel time,
+otherwise a timed-out pause turns into a mission abort.
+|===
+
+=== Container lifecycle
+
+The container itself has no pause state; `PAUSED` is owned by its `ActionTaskClient`.
+
+.Container states as seen in `/task_manager/active_tasks`
+[plantuml, container-states, svg]
+----
+@startuml
+hide empty description
+[*] --> IN_PROGRESS : goal sent
+state IN_PROGRESS {
+  [*] --> Step0
+  Step0 : navigate_to_coordinates
+  Step1 : task_x
+  Step0 --> Step1 : DONE
+}
+IN_PROGRESS --> DONE : last step DONE
+IN_PROGRESS --> ERROR : step failed and\nnot allow_skipping\n(goal aborted)
+IN_PROGRESS --> PAUSED : pause request\n(goal cancelled, child cancelled,\ngoal msg stored)
+PAUSED --> IN_PROGRESS : resume request\n(same goal re-sent,\nrestarts at Step0)
+PAUSED --> CANCELED : cancel / stop
+IN_PROGRESS --> CANCELED : cancel / stop
+DONE --> [*]
+ERROR --> [*]
+CANCELED --> [*]
+@enduml
+----
+
+=== Pause target resolution
+
+`composite_resolution.py` gets a second registry, `units`, next to `composites`:
+
+* `composites` (`system/mission`, `system/perform_in_parallel`): pause descends into active children.
+* `units` (`system/container`): searched only when redirecting *up* from a child; never descended into.
+
+`resolve_down` needs no change: a container is not in `composites`, so it already resolves to itself.
+
+.Resolving a pause/resume request to leaf task ids
+[plantuml, resolution-activity, svg]
+----
+@startuml
+start
+:pause/resume request for task_id;
+if (task_id is, or is nested at any depth in,\na Container? (_find_outermost_unit)) then (yes)
+  :task_id = outermost Container;
+endif
+if (task_id is an active child of a\nMission / Parallel?) then (yes)
+  :start = that composite\n(one hop up, as before);
+else (no)
+  :start = task_id;
+endif
+:resolve_down(start);
+repeat
+  if (task is in composites\n(Mission / Parallel)?) then (yes)
+    :arm/disarm its paused flag;
+    :descend into active children;
+  else (no: plain task or Container)
+    :emit task_id as leaf;
+  endif
+repeat while (more children to expand?)
+:pause_task() / resume_task()\non every leaf ActionTaskClient;
+:_sync_composite_statuses();
+stop
+@enduml
+----
+
+== Flows
+
+=== Pause by outer mission id
+
+[plantuml, pause-by-mission, svg]
+----
+@startuml
+actor Operator
+participant "PauseTasksService" as Svc
+participant "Mission" as M
+participant "ActionTaskClient\n(container #1)" as CC
+participant "Container\nexecute_cb" as C
+participant "TaskManager\n_wait_for_task_finish" as W
+participant "ActionTaskClient\n(task_x)" as XC
+
+note over C, XC : nav_A already DONE, task_x running
+Operator -> Svc : pause([mission_id])
+Svc -> M : request_pause(goal_id)\n(arm Mission flag)
+Svc -> Svc : resolve_down(mission)\n-> active child = container #1\n-> container is a leaf
+Svc -> CC : pause_task()
+CC -> C : cancel container goal
+C -> W : goal_handle.is_cancel_requested
+W -> XC : cancel_task()
+XC --> W : CANCELED
+W --> C : task_x CANCELED
+C -> C : goal_handle.canceled()
+C --> CC : result CANCELED
+CC -> CC : status = PAUSED\n(done cb suppressed,\ngoal msg stored)
+Svc -> Svc : _sync_composite_statuses()\n-> Mission PAUSED
+Svc --> Operator : success, [mission_id]
+@enduml
+----
+
+=== Pause by child id (`task_x`)
+
+The only new logic in the resolution path: the child id is redirected up to its container, which is then
+treated as a leaf. Without this, `task_x` alone would be paused and the original bug would return.
+
+[plantuml, pause-by-child, svg]
+----
+@startuml
+actor Operator
+participant "PauseTasksService" as Svc
+participant "composite_resolution" as R
+participant "Container" as C
+participant "ActionTaskClient\n(container #1)" as CC
+
+Operator -> Svc : pause([task_x_id])
+Svc -> R : _resolve_start_id(task_x_id)
+R -> C : get_active_children(goal_id)
+C --> R : [task_x_id]
+R -> R : outermost container = container #1;\nits enclosing Mission -> start = mission
+Svc -> R : resolve_down(mission)\n(arms Mission flag)
+R --> Svc : [container #1] (leaf)
+Svc -> CC : pause_task()
+note right of CC : continues exactly as\n"Pause by outer mission id"
+@enduml
+----
+
+=== Resume
+
+[plantuml, resume-flow, svg]
+----
+@startuml
+actor Operator
+participant "ResumeTasksService" as Svc
+participant "Mission" as M
+participant "ActionTaskClient\n(container #1)" as CC
+participant "Container\nexecute_cb" as C
+participant "navigate_to_coordinates" as N
+participant "task_x" as X
+
+Operator -> Svc : resume([mission_id | container_id])
+Svc -> M : request_resume(goal_id)\n(only when Mission is on the path)
+Svc -> CC : resume_task()
+CC -> C : re-send stored container goal
+C -> N : step 0: navigate to A
+N --> C : DONE
+C -> X : step 1: task_x
+X --> C : DONE
+C --> CC : SUCCEEDED
+CC --> M : container DONE
+M -> M : next subtask: container #2
+@enduml
+----
+
+== Implementation changes
+
+[cols="2,5"]
+|===
+|File |Change
+
+|`task_manager_msgs/action/Container.action` (new), `task_manager_msgs/CMakeLists.txt`
+|New action, see <<_interface>>.
+
+|`task_manager/task_manager/tasks/container.py` (new)
+|`Container(SystemTask)`: action server (`run_in_own_thread(execute_cb)`, `ReentrantCallbackGroup`, cancel callback
+ACCEPT), sequential `execute_cb`, `get_active_children(goal_id)`, `get_task_specs()`. About 80 lines. No pause state.
+
+|`task_manager/task_manager/tasks/mission.py`
+|Move `_build_result_stub` to a module-level helper shared with `Container`. No behaviour change.
+
+|`task_manager/task_manager/tasks/composite_pause_tracker.py`
+|Add a minimal `ActiveChildrenProvider` protocol (`get_active_children` only). `CompositePauseTracker` already
+satisfies it.
+
+|`task_manager/task_manager/tasks/composite_resolution.py`
+|New `units` argument. `_find_enclosing_composite` searches `composites` and `units`; `_resolve_start_id` walks up
+to the outermost container ancestor, then applies the usual one-hop redirect to *its* enclosing Mission/Parallel, so
+the Mission's paused flag is armed/disarmed consistently whichever id is named. Thread `units` through
+`_resolve_start_id`, `_resolve_target_task_ids`, `pause_or_resume_group`. `resolve_down` and
+`_sync_composite_statuses` unchanged.
+
+|`task_manager/task_manager/tasks/system_tasks.py`
+|`PauseTasksService` and `ResumeTasksService` accept and forward `units`.
+
+|`task_manager/task_manager/task_manager_node.py`
+|`setup_system_tasks`: create `Container(self, action_name=..., execute_task_cb=self.execute_task)`, register
+`known_tasks["system/container"]`, pass `units={"system/container": container}` to the pause/resume services.
+
+|`task_manager/task_manager/task_registrator.py`
+|`_is_nested_mission_start` also accepts the `"Container"` source prefix, so a Mission nested inside a container
+is not cancelled as a same-type duplicate.
+
+|`README.md`, `examples/send_mission_request.py`
+|Document `system/container`, add a mission-of-containers example.
+|===
+
+.`Container.execute_cb` sketch
+[source,python]
+----
+def execute_cb(self, goal_handle):
+    request = goal_handle.request
+    result = build_result_stub(request.subtasks, ContainerAction.Result, "results")
+    goal_id = bytes(goal_handle.goal_id.uuid)
+    try:
+        for subtask, subtask_result in zip(request.subtasks, result.results):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return result
+            self._current_child[goal_id] = subtask.task_id
+            goal = ExecuteTask.Goal(
+                task_id=subtask.task_id,
+                task_name=subtask.task_name,
+                task_data=subtask.task_data,
+                source="Container",
+            )
+            response = self.execute_task_cb(goal, goal_handle)
+            subtask_result.task_status = response.task_status
+            if goal_handle.is_cancel_requested:
+                # Pause or cancel of the container: always end CANCELED, whatever the child reported
+                # (a child server may abort instead of cancel). Anything else would make ActionTaskClient
+                # treat the pause as a real finish and abort the outer mission.
+                goal_handle.canceled()
+                return result
+            if response.task_status != TaskStatus.DONE:
+                if subtask.allow_skipping:
+                    subtask_result.skipped = True
+                    continue
+                goal_handle.abort()
+                return result
+        goal_handle.succeed()
+        return result
+    finally:
+        self._current_child.pop(goal_id, None)
+----
+
+Cancellation of the running child needs no new code: `TaskManager._wait_for_task_finish` already calls
+`task_client.cancel_task()` when the parent `goal_handle.is_cancel_requested`.
+
+== Edge cases and behaviour notes
+
+[cols="2,5"]
+|===
+|Case |Behaviour
+
+|Pause between two steps
+|`execute_cb` sees `is_cancel_requested` before dispatching the next step and returns `canceled()`. Resume reruns
+from step 0.
+
+|Subtask task ids on rerun
+|Empty ids get fresh UUIDs when the re-sent goal builds its result stub. Explicit ids are reused; safe because the
+first run's tasks already finished and `_duplicate_id_exists` only checks active tasks.
+
+|`/task_manager/results`
+|Shows the first run's results (`nav_A` DONE, `task_x` CANCELED), then the rerun's. Consumers must not treat the
+CANCELED child as the container's outcome.
+
+|Container result
+|Final run only (default `_merged_result`). `results` is not in `result_concat_fields`.
+
+|Pause latency
+|Pause waits for the container goal to end, which waits for the child to cancel. The container's
+`cancel_timeout` is derived from the declared tasks' timeouts so it always exceeds its children's.
+
+|Child server aborts instead of cancelling
+|Container still ends `canceled()` because cancel was requested, so the pause is recognised as a pause.
+
+|Child already `PAUSED` when container is paused
+|Not reachable through the services (a child id always redirects to its container). If it happened,
+`cancel_task()` on a paused client finishes it as CANCELED via `_finish_if_paused`.
+
+|Resume by the id of the child that was running when paused
+|Not supported: the child was cancelled with the container and is no longer active, so the request fails with
+"task is not active". Resume by container or mission id. (Supporting it would need the container to remember the
+cancelled child per paused goal.)
+
+|Pause by mission id, resume by container id (or vice versa)
+|Consistent: both requests are redirected from the outermost container to its enclosing Mission, so the Mission's
+paused flag is always armed and disarmed together with the container.
+
+|Container started directly (no outer Mission)
+|Works the same: it is the top-level pause leaf.
+
+|Mission or parallel task nested inside a container
+|Whole container pauses as one unit and restarts from step 0. Pause does not descend into it.
+
+|Pause by the id of a task nested *two or more* levels inside a container (e.g. `Container[nav, Parallel[x, y]]`,
+pause `x`)
+|`_find_enclosing_composite` only redirects one hop up, to the Parallel, which then descends and pauses `x` and `y`
+in place: the container is bypassed. `_resolve_start_id` must keep walking up and start from the *outermost*
+container ancestor if there is one. Applies equally to both alternatives below.
+
+|`system/stop`
+|Container has `cancel_on_stop=True`; stop cancels it and its running child.
+
+|Cancel by container id
+|`CancelTasksService` cancels the container; child cancelled through the same path.
+|===
+
+== Alternative A: `system/container` without an ActionServer
+
+=== Concept
+
+Same user-facing task (`system/container`, same `task_data`, same nesting), but no ROS action server behind it.
+The container *is* its `TaskClient`: a new `ContainerTaskClient` runs the subtask loop in its own thread inside the
+TaskManager process and implements `pause_task()` / `resume_task()` / `cancel_task()` directly, instead of
+getting them as a side effect of cancelling and re-sending a ROS goal.
+
+`Container.action` stays, but only as the message interface for parsing `task_data` (`Goal`) and reporting the
+result (`Result`); nothing serves it.
+
+.Alternative A: classes
+[plantuml, alt-a-classes, svg]
+----
+@startuml
+skinparam classAttributeIconSize 0
+abstract class TaskClient {
+  +task_details
+  +task_specs
+  +goal_done
+  +goal_id
+  +start_task_async(goal)
+  +cancel_task()
+  +request_canceling()
+  +pause_task(paused_by)
+  +resume_task()
+  +register_done_callback(cb)
+}
+class ActionTaskClient
+class ServiceTaskClient
+class ContainerTaskClient {
+  -_execute_task_cb
+  -_goal : Container.Goal
+  -_worker : Thread
+  -_stop : Event
+  -_pausing : bool
+  -_current_child : str
+  +goal_id = None
+  +active_children() : List[str]
+  -_run()
+}
+interface ActiveChildrenProvider {
+  +active_children() : List[str]
+}
+enum TaskServerType {
+  SERVICE
+  ACTION
+  INTERNAL
+}
+class TaskRegistrator {
+  -_internal_client_factories : Dict[str, Callable]
+  +start_new_task(request, specs)
+}
+TaskClient <|-- ActionTaskClient
+TaskClient <|-- ServiceTaskClient
+TaskClient <|-- ContainerTaskClient
+ActiveChildrenProvider <|.. ContainerTaskClient
+TaskRegistrator ..> ContainerTaskClient : creates when\nspecs.task_server_type\n== INTERNAL
+ContainerTaskClient ..> "TaskManager.execute_task" : per subtask,\nwith a cancel token
+@enduml
+----
+
+=== How it works
+
+* `TaskServerType.INTERNAL` is added. `Container.get_task_specs()` returns it.
+* `TaskRegistrator.start_new_task()` gets a third branch: for `INTERNAL`, look up a factory registered by
+  `TaskManager.setup_system_tasks()` (`{"system/container": lambda specs, details: ContainerTaskClient(...)}`)
+  instead of creating an Action/Service client. Goal parsing (`populate_msg` into `Container.Goal`) is unchanged.
+* `start_task_async(goal)`: store goal, status `IN_PROGRESS`, start worker thread running `_run()`.
+* `_run()`: same loop as the ActionServer variant's `execute_cb`, but the "goal handle" passed to
+  `execute_task_cb` is a small cancel token (`is_cancel_requested` property backed by `_stop`), which is all
+  `TaskManager._wait_for_task_finish` needs to cancel the running child. On finish: set status/result, fire done
+  callbacks, *unless* `_pausing` is set.
+* `pause_task()`: set `_pausing` and `_stop`, join the worker with `cancel_timeout`; child is cancelled by
+  `_wait_for_task_finish`. On success status = `PAUSED`, raise `PauseTaskFailedError` on timeout or if the loop
+  already finished.
+* `resume_task()`: clear `_stop` / `_pausing`, status `IN_PROGRESS`, start a fresh worker from step 0.
+* `cancel_task()`: if `PAUSED`, finish immediately as `CANCELED` and fire done callbacks; otherwise set `_stop`
+  and join with `cancel_timeout`, `CancelTaskFailedError` on timeout.
+* `goal_id` is `None`. Up-redirect cannot use the goal-id keyed `get_active_children(goal_id)`; instead
+  `_find_enclosing_composite` asks every active client that implements `ActiveChildrenProvider` (duck-typed
+  `active_children()`). No `units` registry by task name is needed.
+
+.Alternative A: pause and resume
+[plantuml, alt-a-pause-resume, svg]
+----
+@startuml
+actor Operator
+participant "Pause/Resume\nService" as Svc
+participant "ContainerTaskClient\n(container #1)" as CC
+participant "worker thread\n_run()" as W
+participant "TaskManager\nexecute_task" as TM
+participant "ActionTaskClient\n(task_x)" as XC
+participant "navigate_to_coordinates" as N
+
+note over W, XC : nav_A DONE, task_x running
+Operator -> Svc : pause([task_x_id])
+Svc -> Svc : redirect up via\nCC.active_children()\n-> leaf = container #1
+Svc -> CC : pause_task()
+CC -> CC : _pausing = True\n_stop.set()
+TM -> TM : _wait_for_task_finish sees\ntoken.is_cancel_requested
+TM -> XC : cancel_task()
+XC --> TM : CANCELED
+TM --> W : task_x CANCELED
+W -> W : exit loop,\nno done callbacks (pausing)
+CC -> CC : join(worker), status = PAUSED
+== Robot moved while paused ==
+Operator -> Svc : resume([task_x_id | container_id | mission_id])
+Svc -> CC : resume_task()
+CC -> W ** : new worker, step 0
+W -> TM : execute_task(nav_A)
+TM -> N : goal
+N --> TM : DONE
+W -> TM : execute_task(task_x)
+@enduml
+----
+
+=== Changes
+
+[cols="2,5"]
+|===
+|File |Change
+
+|`task_manager/task_manager/task_specs.py`
+|`TaskServerType.INTERNAL`.
+
+|`task_manager/task_manager/tasks/container.py` (new)
+|`ContainerTaskClient(TaskClient)` (worker thread, cancel token, pause/resume/cancel, done callbacks, result
+building) plus `get_task_specs()`. Roughly 150-200 lines: it reimplements status/done-callback bookkeeping that
+`ActionTaskClient` gets from the action layer.
+
+|`task_manager/task_manager/task_registrator.py`
+|`INTERNAL` branch with a factory dict; `_is_nested_mission_start` accepts `"Container"` source.
+
+|`task_manager/task_manager/tasks/composite_resolution.py`
+|`_find_enclosing_composite` also scans active clients exposing `active_children()`; walk up to the outermost
+container.
+
+|`task_manager/task_manager/task_manager_node.py`
+|Register the container factory and task specs. Check that `TaskManager._active_tasks_changed_cb`, the results
+publisher and `ParallelTask` only use the `TaskClient` interface (no `isinstance` on Action/Service clients).
+
+|`task_manager/task_manager/tasks/task_action_server.py`
+|With `enable_task_servers:=True`, either skip `INTERNAL` tasks or verify the debug server works through
+`execute_task` unchanged.
+
+|`task_manager_msgs/action/Container.action` (new)
+|Same as main design, used only as data type.
+|===
+
+=== Pros and cons
+
+.Pros
+* Pause semantics are explicit and owned by the container, not inferred from "the goal ended CANCELED while a
+  pause was in flight". Easy to extend later (e.g. skip nav if the robot did not move, configurable restart step).
+* No ROS action round trip, no extra action server thread or `goal_handle` per container, no dependence on
+  `ActionTaskClient`'s pause bookkeeping (`_PauseState`, suppressed done callback, `paused_results`).
+* No goal-id keyed registry: up-redirect works from the client object.
+
+.Cons
+* A third `TaskClient` kind and `TaskServerType`; every place that assumes "action or service" must be checked
+  (registrator, task debug servers, any `goal_id`-based logic).
+* More new code and threading than the ActionServer variant, which reuses already-tested pause machinery.
+* Not reachable as a plain ROS action (`/task_manager/system/container`) for debugging; only via `execute_task`.
+* Still needs the deep-nesting up-redirect fix.
+
+== Alternative B: `restart_on_resume` flag on `Mission`
+
+=== Concept
+
+No new task. `Mission.action` goal gets `bool restart_on_resume` (default `false`). A nested Mission with the flag
+set behaves exactly like the ActionServer `system/container`: it is a pause leaf, paused by cancelling its goal
+and resumed by re-sending it, so it reruns from subtask 0.
+
+----
+Mission[ Mission(restart_on_resume=true)[nav_A, task_x],
+         Mission(restart_on_resume=true)[nav_B, task_y] ]
+----
+
+=== How it works
+
+* `CompositePauseTracker` gets a non-abstract `pauses_as_unit(goal_id) -> bool` returning `False`.
+* `Mission.execute_cb` stores `request.restart_on_resume` per goal id (popped in `finally`, next to
+  `_subtasks_per_mission`); `Mission.pauses_as_unit()` reads it.
+* `resolve_down`: if the task's tracker says `pauses_as_unit`, return `[task_id]` without arming its paused flag
+  and without descending.
+* `_find_enclosing_composite` already finds a Mission parent. Walk up to the outermost unit ancestor (same
+  deep-nesting fix as the other variants).
+* `_sync_composite_statuses`: skip unit missions; their `PAUSED` status is owned by their `ActionTaskClient`.
+* `Mission._wait_until_resumed` never fires for a unit mission (its flag is never armed); a pause between steps
+  cancels the goal instead, like the container.
+
+.Alternative B: resolution with a per-goal unit check
+[plantuml, alt-b-resolution, svg]
+----
+@startuml
+start
+:pause/resume request for task_id;
+:start = outermost unit ancestor of task_id,\nelse enclosing composite, else task_id;
+:resolve_down(start);
+repeat
+  if (task is a Mission / Parallel?) then (yes)
+    if (tracker.pauses_as_unit(goal_id)?\n(Mission with restart_on_resume)) then (yes)
+      :emit task_id as leaf\n(do not arm flag, do not descend);
+    else (no)
+      :arm/disarm paused flag;
+      :descend into active children;
+    endif
+  else (no)
+    :emit task_id as leaf;
+  endif
+repeat while (more children to expand?)
+:pause_task() / resume_task() on leaves;
+:_sync_composite_statuses()\n(skips unit missions);
+stop
+@enduml
+----
+
+.Alternative B: pause and resume of a unit mission
+[plantuml, alt-b-pause-resume, svg]
+----
+@startuml
+actor Operator
+participant "Pause/Resume\nService" as Svc
+participant "Outer Mission" as M
+participant "ActionTaskClient\n(inner Mission,\nrestart_on_resume)" as IC
+participant "Inner Mission\nexecute_cb" as I
+participant "task_x" as X
+participant "navigate_to_coordinates" as N
+
+Operator -> Svc : pause([outer_mission_id])
+Svc -> M : request_pause (arm flag)
+Svc -> Svc : resolve_down: inner mission\npauses_as_unit -> leaf
+Svc -> IC : pause_task()
+IC -> I : cancel goal
+I -> X : cancel (via _wait_for_task_finish)
+X --> I : CANCELED
+I --> IC : CANCELED -> status PAUSED
+== Robot moved ==
+Operator -> Svc : resume([outer_mission_id])
+Svc -> M : request_resume (disarm flag)
+Svc -> IC : resume_task()
+IC -> I : re-send goal (restart_on_resume=true)
+I -> N : subtask 0: navigate
+N --> I : DONE
+I -> X : subtask 1: task_x
+@enduml
+----
+
+=== Changes
+
+[cols="2,5"]
+|===
+|File |Change
+
+|`task_manager_msgs/action/Mission.action`
+|Goal: `bool restart_on_resume`.
+
+|`task_manager/task_manager/tasks/composite_pause_tracker.py`
+|`pauses_as_unit(goal_id)` default `False`.
+
+|`task_manager/task_manager/tasks/mission.py`
+|Per-goal flag storage, `pauses_as_unit()` override. Roughly 10 lines.
+
+|`task_manager/task_manager/tasks/composite_resolution.py`
+|Unit check in `resolve_down`, skip in `_sync_composite_statuses`, walk up to outermost unit ancestor.
+
+|`README.md`, examples
+|Document the flag.
+|===
+
+=== Pros and cons
+
+.Pros
+* Smallest change: no new task type, action or registration; about 30-40 changed lines.
+* One concept for users ("a mission"), groups are just nested missions.
+* Top-level `restart_on_resume=true` gives "restart the whole mission on resume" for free, if ever wanted.
+
+.Cons
+* `Mission` carries two pause models chosen per goal; `resolve_down` must ask per goal id, not per task name.
+  Harder to reason about than "containers are leaves, missions are not".
+* Changes the `Mission.action` interface (backward compatible since default is `false`, but every client
+  regenerates messages).
+* Nested missions inherit Mission specifics that do not fit a small group (non-reentrant special case in
+  `_is_nested_mission_start`, between-step pause machinery that is dead code for unit missions).
+
+== Comparison
+
+[cols="2,3,3,3"]
+|===
+| |Main: Container with ActionServer |A: Container without ActionServer |B: `restart_on_resume` on Mission
+
+|New task / interface
+|`system/container`, `Container.action`
+|`system/container`, `Container.action` (data only), `TaskServerType.INTERNAL`
+|None; field on `Mission.action`
+
+|Pause mechanism
+|Existing `ActionTaskClient` cancel + re-send
+|Own `pause_task`/`resume_task` in `ContainerTaskClient`
+|Existing `ActionTaskClient` cancel + re-send
+
+|Resolution change
+|Up-redirect via `units` registry
+|Up-redirect via `active_children()` on client
+|Per-goal `pauses_as_unit` in `resolve_down`
+
+|Approx. new code
+|~80 lines + plumbing
+|~150-200 lines + plumbing
+|~30-40 lines
+
+|Risk
+|Low: reuses tested paths
+|Medium: new client kind, threading
+|Low code risk, higher conceptual coupling in Mission
+
+|Extensibility (skip nav if not moved, custom restart point)
+|Limited: restart is implicit
+|Best: container owns its pause logic
+|Limited, and grows Mission further
+
+|Pause turned into mission abort by a child aborting on cancel, or by a pause timeout
+|Yes, fixed in container code + timeout derivation
+|No by design: container decides it is paused, not the action layer
+|Yes, same fixes needed inside Mission
+
+|Can change implementation later without API change
+|Yes: can become A behind the same task name and `task_data`
+|-
+|No: `restart_on_resume` stays in `Mission.action`
+|===
+
+== Other alternatives considered
+
+[cols="2,3,3"]
+|===
+|Option |How it works |Why not chosen
+
+|`restart_group` field on `SubtaskGoal`
+|Flat mission; Mission cancels the in-group child on pause and rewinds its loop index on resume.
+|Needs an index loop, an injected cancel callback, a rewind-vs-real-cancel flag and handling of races with
+children finishing naturally. Much more new logic.
+
+|Combined `navigate_and_do_x` action server outside TaskManager
+|One action does nav then x; pause re-sends it, so nav reruns.
+|No TaskManager change, but needs a wrapper per task type and moves grouping into robot code. Still a valid
+fallback for one-off cases.
+|===
+
+[[open-questions]]
+== Open questions
+
+* Is a derived container `cancel_timeout` enough, or should it also be a parameter or a per-goal field?
+* Which task types are safe to rerun from scratch? Decide before putting them in containers.
+* Should `results` be concatenated across runs (`result_concat_fields`) to keep the full attempt history in the
+  container result?
+
+== Test plan
+
+.Unit tests
+* `test/test_container.py` (pattern from `test_mission.py`): all steps succeed; abort on failed step;
+  `allow_skipping`; cancel before first step, mid-step and between steps; `get_active_children` returns current
+  child and is empty after finish.
+* `test/test_composite_resolution.py`: a child id redirects up to its container; the container resolves to
+  itself; an outer Mission resolves down to the container and stops there.
+
+.Integration tests
+`test/integration_tests/test_container_integration.py` (mock servers from `mock_servers.py`, pattern from
+`test_mission_integration.py`), on `Mission[ Container[nav, x], Container[nav, y] ]`:
+
+* Pause during `x` by outer mission id, resume: nav mock receives its goal twice, `x` restarts after nav, mission
+  succeeds.
+* Same, pausing by container id.
+* Same, pausing by `x`'s own task id.
+* Pause between nav and `x`: resume reruns nav first.
+* Cancel and stop while the container is paused: container and mission end CANCELED.
+* Child mock aborts when cancelled; pause still succeeds, container PAUSED, mission not aborted.
+* Child cancel takes close to its `cancel_timeout`; pause still succeeds.
+* `Mission[ Container[nav, Parallel[x, y]] ]`, pause by `x` id: whole container paused, resume reruns nav.
+* Regression: a plain Mission without containers still resumes in place.
+
+.Run
+----
+docker compose -f docker/task_manager/docker-compose.yaml run --build task_manager
+python3 -m pytest /ros2_ws/src/task_manager/test/
+pre-commit run --all-files
+----

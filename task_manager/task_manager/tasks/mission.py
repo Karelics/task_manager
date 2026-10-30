@@ -25,7 +25,7 @@ from rclpy.node import Node
 # Task Manager messages
 from task_manager_msgs.action import ExecuteTask
 from task_manager_msgs.action import Mission as MissionAction
-from task_manager_msgs.msg import SubtaskResult, TaskStatus
+from task_manager_msgs.msg import SubtaskGoal, SubtaskResult, TaskStatus
 
 # Task Manager
 from task_manager.own_thread import run_in_own_thread
@@ -128,14 +128,7 @@ class Mission(SystemTask, CompositePauseTracker):
     def _build_result_stub(request):
         """Generates task IDs for all subtasks and pre-fills a RECEIVED result for each, so that if something goes wrong
         partway through execution, every requested subtask still has a result."""
-        result = MissionAction.Result()
-        for subtask in request.subtasks:
-            if subtask.task_id == "":
-                subtask.task_id = str(uuid.uuid4())
-            result.mission_results.append(
-                SubtaskResult(task_name=subtask.task_name, task_id=subtask.task_id, task_status=TaskStatus.RECEIVED)
-            )
-        return result
+        return MissionAction.Result(mission_results=build_subtask_results(request.subtasks))
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
@@ -154,3 +147,18 @@ class Mission(SystemTask, CompositePauseTracker):
     @staticmethod
     def _cancel_cb(_goal_handle):
         return CancelResponse.ACCEPT
+
+
+def build_subtask_results(subtasks: List[SubtaskGoal]) -> List[SubtaskResult]:
+    """Generates task IDs for subtasks without one (in place) and returns a RECEIVED result stub for each subtask.
+
+    Shared by the composite tasks that run SubtaskGoals sequentially (Mission, Container).
+    """
+    results = []
+    for subtask in subtasks:
+        if subtask.task_id == "":
+            subtask.task_id = str(uuid.uuid4())
+        results.append(
+            SubtaskResult(task_name=subtask.task_name, task_id=subtask.task_id, task_status=TaskStatus.RECEIVED)
+        )
+    return results

@@ -15,7 +15,18 @@
 #  ------------------------------------------------------------------
 import threading
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Dict, List, Protocol
+
+
+class ActiveChildrenProvider(Protocol):  # pylint: disable=too-few-public-methods
+    """Anything that can report the task_ids of a running invocation's currently active children.
+
+    Satisfied by every CompositePauseTracker (pause descends into those children) and by pause-as-a-unit tasks such as
+    Container (pause never descends; the children are only used to redirect a child's pause up to its container).
+    """
+
+    def get_active_children(self, goal_id: bytes) -> List[str]:
+        """Returns the task_ids of this invocation's currently active (not yet finished) children."""
 
 
 class CompositePauseTracker(ABC):

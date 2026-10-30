@@ -15,7 +15,12 @@
 #  ------------------------------------------------------------------
 """Resolves a requested task_id down to the actual leaf task(s) to act on for pause/resume/cancel, redirecting through
 composite tasks (Mission, ParallelTaskExecutor, ...), and keeps a composite's own displayed status in sync with its
-children and paused flag."""
+children and paused flag.
+
+Pause-as-a-unit tasks ("units", e.g. Container) are deliberately *not* composites here: resolution never descends into
+them, so they are paused/resumed as a whole leaf. They are only consulted to redirect a pause/resume of one of their
+(possibly deeply nested) children up to the outermost such unit.
+"""
 
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -25,14 +30,14 @@ from task_manager_msgs.msg import TaskStatus
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import TaskClient
-from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
+from task_manager.tasks.composite_pause_tracker import ActiveChildrenProvider, CompositePauseTracker
 
 
 def _composite_active_children(
-    task_client: TaskClient, composites: Dict[str, "CompositePauseTracker"]
+    task_client: TaskClient, composites: Dict[str, "ActiveChildrenProvider"]
 ) -> Optional[List[str]]:
-    """If task_client is one of the registered composite task types, returns its currently active children's task_ids
-    (possibly empty).
+    """If task_client is one of the registered composite (or unit) task types, returns its currently active children's
+    task_ids (possibly empty).
 
     None if it isn't a registered composite at all.
     """
@@ -92,20 +97,64 @@ def resolve_down(
 
 
 def _find_enclosing_composite(
-    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]
+    task_id: str,
+    active_tasks: ActiveTasks,
+    composites: Dict[str, "CompositePauseTracker"],
+    units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
 ) -> Optional[str]:
-    """Return the task_id of the active composite that currently tracks task_id as one of its active children, one hop
-    up, or None if no such composite exists right now."""
-    for task_name in composites:
+    """Return the task_id of the active composite (or unit) that currently tracks task_id as one of its active children,
+    one hop up, or None if no such composite exists right now."""
+    providers = {**composites, **(units or {})}
+    for task_name in providers:
         for candidate in active_tasks.get_active_tasks_by_name(task_name):
-            if task_id in (_composite_active_children(candidate, composites)):
+            if task_id in (_composite_active_children(candidate, providers)):
                 return candidate.task_details.task_id
     return None
 
 
-def _resolve_start_id(task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]) -> str:
+def _find_outermost_unit(
+    task_id: str,
+    active_tasks: ActiveTasks,
+    composites: Dict[str, "CompositePauseTracker"],
+    units: Dict[str, "ActiveChildrenProvider"],
+) -> Optional[str]:
+    """Walks up from task_id (inclusive) through every enclosing composite/unit and returns the task_id of the outermost
+    unit on that chain, or None if task_id isn't (inside) a unit.
+
+    Walking all the way up, rather than one hop, matters for children nested deeper inside a unit (e.g.
+    Container[nav, Parallel[x, y]]) - pausing x must still pause the whole container, not just the parallel task.
+    """
+    outermost = None
+    current: Optional[str] = task_id
+    visited = set()
+    while current is not None and current not in visited:
+        visited.add(current)
+        try:
+            if active_tasks.get_task_client(current).task_specs.task_name in units:
+                outermost = current
+        except KeyError:
+            pass  # Not active (anymore) - can't be a unit, but keep walking up in case its parent still is.
+        current = _find_enclosing_composite(current, active_tasks, composites, units)
+    return outermost
+
+
+def _resolve_start_id(
+    task_id: str,
+    active_tasks: ActiveTasks,
+    composites: Dict[str, "CompositePauseTracker"],
+    units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
+) -> str:
     """The task_id resolve_down should actually expand from: task_id's enclosing composite if it's currently a tracked
-    active child of one, otherwise task_id itself."""
+    active child of one, otherwise task_id itself.
+
+    If task_id is (nested in) a unit, the outermost such unit takes task_id's place first, so the unit is paused as a
+    whole and its enclosing composite (if any) is still redirected to exactly as for any other child - keeping e.g. a
+    Mission's paused flag consistent no matter whether the Mission, the container or the container's child is named.
+    """
+    if units:
+        outermost_unit = _find_outermost_unit(task_id, active_tasks, composites, units)
+        if outermost_unit is not None:
+            task_id = outermost_unit
     enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
     return enclosing if enclosing is not None else task_id
 
@@ -115,15 +164,18 @@ def _resolve_target_task_ids(
     active_tasks: ActiveTasks,
     composites: Dict[str, "CompositePauseTracker"],
     paused_flag: Optional[bool] = None,
+    units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
 ) -> List[str]:
     """Resolves a task_id given in a pause/resume request to the full set of leaf task_ids that must actually be
     paused/resumed together.
 
     :param paused_flag: forwarded to resolve_down - see its docstring for what arming every composite
         encountered while descending means and why it matters.
+    :param units: pause-as-a-unit task types (e.g. Container) - see _resolve_start_id.
     :raises KeyError: if task_id (or its resolved starting point) is not an active task.
     """
-    return resolve_down(_resolve_start_id(task_id, active_tasks, composites), active_tasks, composites, paused_flag)
+    start_id = _resolve_start_id(task_id, active_tasks, composites, units)
+    return resolve_down(start_id, active_tasks, composites, paused_flag)
 
 
 def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]) -> None:
@@ -179,6 +231,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
     callback: Callable[[str], bool],
     pause: bool,
     paused_by: Optional[str] = None,
+    units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
 ) -> bool:
     """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
@@ -197,10 +250,11 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
     :param pause: True to arm every composite's own paused flag encountered while resolving down to the leaves,
         False to disarm them - see resolve_down's `paused_flag` parameter.
     :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
+    :param units: pause-as-a-unit task types (e.g. Container), paused/resumed as a whole - see _resolve_start_id.
     :raises KeyError: if task_id (or its resolved starting point) is not an active task.
     :return: True if everything succeeded.
     """
-    target_ids = _resolve_target_task_ids(task_id, active_tasks, composites, paused_flag=pause)
+    target_ids = _resolve_target_task_ids(task_id, active_tasks, composites, paused_flag=pause, units=units)
 
     success = True
     for member_id in target_ids:

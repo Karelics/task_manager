@@ -32,6 +32,7 @@ set(srv_files
 
 set(action_files
   "action/Mission.action"
+  "action/Container.action"
   "action/ExecuteTask.action"
   "action/PerformInParallel.action"
   "action/Wait.action"

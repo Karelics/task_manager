@@ -139,12 +139,14 @@ class TaskRegistrator:
     def _is_nested_mission_start(request: ExecuteTask.Goal) -> bool:
         """Whether request is a Mission starting one of its own subtasks that is itself another system/mission.
 
-        Mission.execute_cb() always starts its subtasks with source="Mission" (see mission.py). Without this exemption,
-        the "cancel any already-running task of the same type" safety net below would treat the outer, still-running
-        Mission as a conflicting duplicate and cancel it out from under itself the moment a nested mission subtask tries
-        to start.
+        Mission.execute_cb() always starts its subtasks with source="Mission" (see mission.py), Container with
+        source="Container" (see container.py). Without this exemption, the "cancel any already-running task of the same
+        type" safety net below would treat the outer, still-running Mission as a conflicting duplicate and cancel it out
+        from under itself the moment a nested mission subtask tries to start.
         """
-        return request.task_name == "system/mission" and request.source.startswith(("Mission", "ParallelExecutor"))
+        return request.task_name == "system/mission" and request.source.startswith(
+            ("Mission", "ParallelExecutor", "Container")
+        )
 
     def _cancel_task_of_same_type(self, task_name: str) -> None:
         """Cancels the task with the same name.
