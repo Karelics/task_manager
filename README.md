@@ -82,6 +82,11 @@ Task Manager provides a way to combine multiple tasks into a larger Mission. Thi
 
 Mission can be started by calling `system/mission` task.
 
+#### Restarting on resume
+Setting `restart_on_resume: true` in the mission goal makes the mission be paused and resumed as a single unit, always restarting from its first subtask when resumed. Use it for groups of tasks where a step relies on the previous one having just been completed, for example navigating to a location and then performing a task there: if the robot is moved while the task is paused, resuming the mission navigates back before the task is restarted.
+
+Such missions are typically nested in a regular Mission, `Mission[Mission(restart_on_resume)[navigate_A, task_x], Mission(restart_on_resume)[navigate_B, task_y]]`. Pausing one by its own Task ID, by the Task ID of the Mission it runs in, or by the Task ID of any task running inside it (at any depth), pauses the whole outermost restart-on-resume mission: its running subtask is cancelled and the mission gets the `PAUSED` status. Since the cancelled subtask is no longer active, resume by the mission's own Task ID or by the enclosing Mission's. A pause can only complete once the running subtask has been cancelled, so the Mission's cancel timeout is derived from the longest `cancel_timeout` of all declared tasks. Subtasks are therefore preferably action-backed, and must be safe to run again from scratch.
+
 <p align="center">
 <img src="images/mission.jpg" alt="drawing" width="800"/> <br>
 <em>Example UI implementation for displaying a Mission that consists of "Navigation" and "Take Photo" tasks.</em>
@@ -116,7 +121,7 @@ A paused task:
 
 **Service-backed tasks.** ROS services cannot be cancelled mid-flight, so pausing one waits up to the task's `cancel_timeout` for the call to finish naturally. If it finishes within that time, the pause is reported as successful (even though the task ended up `DONE` rather than `PAUSED`). Only a call that takes longer is reported as a failed pause.
 
-**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth.
+**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth. Missions with [`restart_on_resume`](#restarting-on-resume) are the exception: they are paused as a whole and restart from their first subtask when resumed.
 
 Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs. The succeeded parts of the failed operation are not rolled back.
 

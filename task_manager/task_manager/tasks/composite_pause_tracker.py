@@ -36,6 +36,15 @@ class CompositePauseTracker(ABC):
     def get_active_children(self, goal_id: bytes) -> List[str]:
         """Returns the task_ids of this composite invocation's currently active (not yet finished) children."""
 
+    def pauses_as_unit(self, goal_id: bytes) -> bool:  # pylint: disable=unused-argument
+        """Whether this composite invocation is paused/resumed as a single unit, i.e. by cancelling and later re-sending
+        its own goal, instead of by descending into its active children.
+
+        Pause/resume never descends into such an invocation, and a pause/resume of anything nested in it is redirected
+        up to it. False unless overridden.
+        """
+        return False
+
     def _start_pause_tracking(self, goal_id: bytes) -> None:
         """Registers goal_id as a running invocation whose paused flag can be armed/queried.
 

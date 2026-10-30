@@ -15,7 +15,12 @@
 #  ------------------------------------------------------------------
 """Resolves a requested task_id down to the actual leaf task(s) to act on for pause/resume/cancel, redirecting through
 composite tasks (Mission, ParallelTaskExecutor, ...), and keeps a composite's own displayed status in sync with its
-children and paused flag."""
+children and paused flag.
+
+A composite invocation that pauses as a unit (a Mission with restart_on_resume, see
+CompositePauseTracker.pauses_as_unit) is the exception: resolution never descends into it, so it is paused/resumed as a
+whole leaf. A pause/resume of anything nested in it is redirected up to the outermost such unit.
+"""
 
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -45,6 +50,14 @@ def _composite_active_children(
     return tracker.get_active_children(bytes(goal_id.uuid))
 
 
+def _pauses_as_unit(task_client: TaskClient, composites: Dict[str, "CompositePauseTracker"]) -> bool:
+    """Whether task_client is a running composite invocation that is paused/resumed as a single unit."""
+    tracker = composites.get(task_client.task_specs.task_name)
+    if tracker is None or task_client.goal_id is None:
+        return False
+    return tracker.pauses_as_unit(bytes(task_client.goal_id.uuid))
+
+
 def resolve_down(
     task_id: str,
     active_tasks: ActiveTasks,
@@ -58,7 +71,8 @@ def resolve_down(
     is itself a parallel task) are handled uniformly, regardless of depth or mix of composite types. A composite
     with no active children yet (e.g. paused right as it starts, before it has recorded any) resolves to itself.
     A child that finishes on its own between being listed as active and being resolved here (e.g. a
-    service-backed task that can't actually be paused) simply contributes no leaves.
+    service-backed task that can't actually be paused) simply contributes no leaves. A composite that pauses as a
+    unit resolves to itself, without touching its paused flag.
 
     :param task_id: The ID of the task to resolve down to its leaf tasks.
     :param active_tasks: The collection of currently active tasks.
@@ -74,6 +88,8 @@ def resolve_down(
     :raises KeyError: if task_id itself is not an active task.
     """
     client = active_tasks.get_task_client(task_id)
+    if _pauses_as_unit(client, composites):
+        return [task_id]
     if paused_flag is not None:
         tracker = composites.get(client.task_specs.task_name)
         if tracker is not None and client.goal_id is not None:
@@ -103,9 +119,42 @@ def _find_enclosing_composite(
     return None
 
 
+def _find_outermost_unit(
+    task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]
+) -> Optional[str]:
+    """Walks up from task_id (inclusive) through every enclosing composite and returns the task_id of the outermost
+    composite on that chain that pauses as a unit, or None if task_id isn't (inside) one.
+
+    Walking all the way up, rather than one hop, matters for children nested deeper inside a unit (e.g.
+    Mission(restart_on_resume)[nav, Parallel[x, y]]) - pausing x must still pause the whole unit mission, not just
+    the parallel task.
+    """
+    outermost = None
+    current: Optional[str] = task_id
+    visited = set()
+    while current is not None and current not in visited:
+        visited.add(current)
+        try:
+            if _pauses_as_unit(active_tasks.get_task_client(current), composites):
+                outermost = current
+        except KeyError:
+            pass  # Not active (anymore) - can't be a unit, but keep walking up in case its parent still is.
+        current = _find_enclosing_composite(current, active_tasks, composites)
+    return outermost
+
+
 def _resolve_start_id(task_id: str, active_tasks: ActiveTasks, composites: Dict[str, "CompositePauseTracker"]) -> str:
     """The task_id resolve_down should actually expand from: task_id's enclosing composite if it's currently a tracked
-    active child of one, otherwise task_id itself."""
+    active child of one, otherwise task_id itself.
+
+    If task_id is (nested in) a composite that pauses as a unit, the outermost such unit takes task_id's place first,
+    so the unit is paused as a whole and its enclosing composite (if any) is still redirected to exactly as for any
+    other child - keeping e.g. an outer Mission's paused flag consistent no matter whether the outer Mission, the unit
+    mission or the unit mission's child is named.
+    """
+    outermost_unit = _find_outermost_unit(task_id, active_tasks, composites)
+    if outermost_unit is not None:
+        task_id = outermost_unit
     enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
     return enclosing if enclosing is not None else task_id
 
@@ -135,12 +184,15 @@ def _sync_composite_statuses(active_tasks: ActiveTasks, composites: Dict[str, "C
     active children at all (e.g. a Mission paused right between two subtasks, whose previous subtask already
     finished/vanished). Composites without such a flag of their own fall back entirely to reflecting what their
     children are doing. Runs repeated passes (bounded by the number of composites) so a multi-level nesting
-    chain settles regardless of scan order.
+    chain settles regardless of scan order. Composites that pause as a unit are skipped: their status is set by their
+    own task client, like any other leaf.
     """
     all_composites = [client for task_name in composites for client in active_tasks.get_active_tasks_by_name(task_name)]
     for _ in range(len(all_composites) + 1):
         changed = False
         for client in all_composites:
+            if _pauses_as_unit(client, composites):
+                continue
             tracker = composites[client.task_specs.task_name]
             boundary_paused = tracker.is_paused(bytes(client.goal_id.uuid)) if client.goal_id else False
 

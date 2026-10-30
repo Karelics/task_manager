@@ -1,4 +1,8 @@
 SubtaskGoal[] subtasks
+# If true, this mission is paused and resumed as a single unit: pausing it (or any of its subtasks) cancels the
+# mission, and resuming restarts it from its first subtask. Useful for groups of subtasks that rely on the previous
+# subtask having just been completed, e.g. navigate to a place and then perform a task there.
+bool restart_on_resume
 ---
 SubtaskResult[] mission_results
 ---

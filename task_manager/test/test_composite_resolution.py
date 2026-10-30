@@ -69,13 +69,21 @@ def make_composite_client(task_id: str, task_name: str, goal_id_byte: int, statu
     return client
 
 
+def make_tracker_mock(tracker_class):
+    """Mock composite tracker (Mission/ParallelTaskExecutor) whose invocations don't pause as a unit, unless a test says
+    otherwise."""
+    tracker = Mock(spec=tracker_class)
+    tracker.pauses_as_unit.return_value = False
+    return tracker
+
+
 class ResolveDownTests(unittest.TestCase):
     """Unit tests for composite_resolution.resolve_down."""
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_leaf_resolves_to_itself(self):
@@ -150,8 +158,8 @@ class FindEnclosingCompositeTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_finds_owning_mission(self):
@@ -189,7 +197,7 @@ class ResolveTargetTaskIdsTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.composites = {PARALLEL: self.parallel}
 
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
@@ -220,8 +228,8 @@ class SyncCompositeStatusesTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         # A bare Mock's methods are truthy by default - without this, every composite would spuriously look
         # "boundary paused" in every test below, since is_paused() is now consulted unconditionally.
         self.mission.is_paused.return_value = False
@@ -345,8 +353,8 @@ class ResolveStartIdTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_resolve_start_id_returns_enclosing_composite_for_a_tracked_child(self):
@@ -368,8 +376,8 @@ class ResolveDownPausedFlagTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
 
     def test_paused_flag_true_calls_request_pause_with_the_right_goal_id(self):
@@ -439,8 +447,8 @@ class PauseOrResumeGroupTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.active_tasks = ActiveTasks()
-        self.mission = Mock(spec=Mission)
-        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
         self.mission.is_paused.return_value = False
         self.parallel.is_paused.return_value = False
         self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
@@ -475,6 +483,107 @@ class PauseOrResumeGroupTests(unittest.TestCase):
 
         callback.assert_not_called()
         self.assertTrue(success)
+
+
+class UnitMissionResolutionTests(unittest.TestCase):
+    """Unit tests for resolving pause/resume requests around missions with restart_on_resume, which pause as a unit."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.mission = make_tracker_mock(Mission)
+        self.parallel = make_tracker_mock(ParallelTaskExecutor)
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
+
+    def _children(self, tracker, mapping):
+        tracker.get_active_children.side_effect = lambda goal_id: {
+            bytes([byte] * 16): children for byte, children in mapping.items()
+        }.get(goal_id, [])
+
+    def _unit_goals(self, *goal_id_bytes):
+        self.mission.pauses_as_unit.side_effect = lambda goal_id: goal_id in {bytes([b] * 16) for b in goal_id_bytes}
+
+    def test_unit_mission_resolves_to_itself(self):
+        """A unit mission is a leaf: resolution never descends into it, nor arms its paused flag."""
+        self.active_tasks.add(make_composite_client("u1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["x"]})
+        self._unit_goals(1)
+
+        self.assertEqual(_resolve_target_task_ids("u1", self.active_tasks, self.composites, paused_flag=True), ["u1"])
+        self.mission.request_pause.assert_not_called()
+
+    def test_child_redirects_up_to_its_unit_mission(self):
+        """Pausing a unit mission's running child pauses the unit mission instead."""
+        self.active_tasks.add(make_composite_client("u1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["x"]})
+        self._unit_goals(1)
+
+        self.assertEqual(_resolve_target_task_ids("x", self.active_tasks, self.composites), ["u1"])
+
+    def test_outer_mission_descends_to_unit_mission_and_stops(self):
+        """A plain Mission resolves down to its running unit mission, not to the unit mission's child."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("u1", MISSION, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["u1"], 2: ["x"]})
+        self._unit_goals(2)
+
+        self.assertEqual(_resolve_target_task_ids("m1", self.active_tasks, self.composites), ["u1"])
+        self.assertEqual(_resolve_target_task_ids("x", self.active_tasks, self.composites), ["u1"])
+
+    def test_deeply_nested_child_redirects_up_to_outermost_unit_mission(self):
+        """A child nested several levels inside a unit mission (Unit[Unit[Parallel[x, y]]]) still pauses the whole
+        outermost unit mission."""
+        self.active_tasks.add(make_composite_client("u_outer", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("u_inner", MISSION, goal_id_byte=2))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=3))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self.active_tasks.add(make_task_client("y", "some_task"))
+        self._children(self.mission, {1: ["u_inner"], 2: ["p1"]})
+        self._children(self.parallel, {3: ["x", "y"]})
+        self._unit_goals(1, 2)
+
+        for requested in ("x", "y", "p1", "u_inner", "u_outer"):
+            with self.subTest(requested=requested):
+                self.assertEqual(_resolve_target_task_ids(requested, self.active_tasks, self.composites), ["u_outer"])
+
+    def test_sync_skips_unit_mission(self):
+        """A unit mission's displayed status is owned by its own task client, not derived from its children."""
+        self.active_tasks.add(make_composite_client("u1", MISSION, goal_id_byte=1, status=TaskStatus.IN_PROGRESS))
+        self.active_tasks.add(make_task_client("x", "some_task", status=TaskStatus.PAUSED))
+        self._children(self.mission, {1: ["x"]})
+        self._unit_goals(1)
+        self.mission.is_paused.return_value = False
+
+        _sync_composite_statuses(self.active_tasks, self.composites)
+
+        self.assertEqual(self.active_tasks.get_task_client("u1").task_details.status, TaskStatus.IN_PROGRESS)
+
+    def test_pause_or_resume_group_pauses_the_unit_mission(self):
+        """pause_or_resume_group acts on the unit mission, not its child, and still syncs the enclosing Mission."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("u1", MISSION, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["u1"], 2: ["x"]})
+        self._unit_goals(2)
+        self.mission.is_paused.return_value = False
+
+        def pause(task_id, _paused_by):
+            self.active_tasks.get_task_client(task_id).task_details.status = TaskStatus.PAUSED
+            return True
+
+        callback = Mock(side_effect=pause)
+
+        success = pause_or_resume_group(
+            "x", self.active_tasks, self.composites, (TaskStatus.RECEIVED, TaskStatus.IN_PROGRESS), callback, pause=True
+        )
+
+        self.assertTrue(success)
+        callback.assert_called_once_with("u1", None)
+        # Redirected via the outer Mission like any other mission child, so its own paused flag is armed too
+        self.mission.request_pause.assert_called_once_with(bytes([1] * 16))
+        self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
 
 if __name__ == "__main__":

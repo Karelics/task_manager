@@ -217,9 +217,25 @@ class TaskManager(Node):
         self.known_tasks["system/cancel_task"] = cancel_service.get_task_specs(cancel_topic)
         self.known_tasks["system/pause_task"] = pause_service.get_task_specs(pause_topic)
         self.known_tasks["system/resume_task"] = resume_service.get_task_specs(resume_topic)
-        self.known_tasks["system/mission"] = mission.get_task_specs(mission_topic)
+        self.known_tasks["system/mission"] = mission.get_task_specs(
+            mission_topic, cancel_timeout=self._mission_cancel_timeout()
+        )
         self.known_tasks["system/wait"] = wait.get_task_specs(wait_topic)
         self.known_tasks["system/perform_in_parallel"] = parallel.get_task_specs(parallel_topic)
+
+    def _mission_cancel_timeout(self) -> float:
+        """Cancel timeout for system/mission: cancelling a mission, or pausing one with restart_on_resume, only
+        completes once its running subtask has been cancelled, so it must exceed the cancel timeout of any task it may
+        run.
+
+        Otherwise a pause could time out, and the subtask's late cancellation would be taken as the mission genuinely
+        finishing, aborting any mission it runs in.
+        """
+        margin = 1.0
+        longest = max(
+            (specs.cancel_timeout for specs in self.known_tasks.values()), default=self._default_cancel_timeout
+        )
+        return longest + margin
 
     def _execute_task_action_cb(self, goal_handle: ServerGoalHandle):
         request = goal_handle.request

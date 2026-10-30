@@ -335,6 +335,54 @@ class MissionUnittest(unittest.TestCase):
         result = self.mission.execute_cb(goal_handle=mock_goal_handle)
         self.assertEqual(result, expected_result)
 
+    def test_pauses_as_unit_only_with_restart_on_resume(self):
+        """Only a mission with restart_on_resume pauses as a unit, and only while it is running."""
+        seen = []
+
+        def record_unit(_goal, _handle):
+            seen.append(self.mission.pauses_as_unit(bytes([0] * 16)))
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = record_unit
+        for restart_on_resume in (False, True):
+            request = MissionAction.Goal(
+                subtasks=[SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a")],
+                restart_on_resume=restart_on_resume,
+            )
+            self.mission.execute_cb(Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False))
+
+        self.assertEqual(seen, [False, True])
+        self.assertFalse(self.mission.pauses_as_unit(bytes([0] * 16)))
+
+    def test_unit_mission_cancel_ends_canceled_even_if_subtask_aborts(self):
+        """If the running subtask reports an error instead of CANCELED when a restart_on_resume mission is cancelled
+        (e.g. its server aborts on cancel), the mission must still end CANCELED, so that a pause is recognised as a
+        pause."""
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="subtask_a", task_data="{}", task_id="a"),
+                SubtaskGoal(task_name="subtask_b", task_data="{}", task_id="b"),
+            ],
+            restart_on_resume=True,
+        )
+        goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        def abort_on_cancel(_goal, handle):
+            handle.is_cancel_requested = True
+            return ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = abort_on_cancel
+
+        self.mission.execute_cb(goal_handle)
+
+        self.assertEqual(self.mission.execute_task_cb.call_count, 1)
+        goal_handle.canceled.assert_called_once()
+        goal_handle.abort.assert_not_called()
+
+    def test_get_task_specs_cancel_timeout(self):
+        """The mission's cancel timeout is configurable."""
+        self.assertEqual(Mission.get_task_specs("topic", cancel_timeout=7.0).cancel_timeout, 7.0)
+
 
 if __name__ == "__main__":
     unittest.main()

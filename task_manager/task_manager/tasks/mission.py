@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import uuid
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Set
 
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
@@ -35,7 +35,12 @@ from task_manager.tasks.system_tasks import SystemTask
 
 
 class Mission(SystemTask, CompositePauseTracker):
-    """Implements the Mission task, which is able to compose multiple existing tasks."""
+    """Implements the Mission task, which is able to compose multiple existing tasks.
+
+    By default, pausing a mission pauses its currently running subtask, and resuming continues from that subtask. With
+    `restart_on_resume` set in the goal, the mission is instead paused as a single unit: its own goal gets cancelled
+    (cancelling the running subtask with it), and resuming re-sends the same goal, restarting from the first subtask.
+    """
 
     def __init__(
         self,
@@ -52,6 +57,8 @@ class Mission(SystemTask, CompositePauseTracker):
         self.execute_task_cb = execute_task_cb
         # ROS action goal_id (as bytes) of each running mission -> task_id of its currently running subtask.
         self._subtasks_per_mission: Dict[bytes, str] = {}
+        # ROS action goal_ids (as bytes) of the running missions that have restart_on_resume set.
+        self._unit_missions: Set[bytes] = set()
         ActionServer(
             node=node,
             action_type=MissionAction,
@@ -66,6 +73,10 @@ class Mission(SystemTask, CompositePauseTracker):
         mission subtask isn't running (or isn't known)."""
         current = self._subtasks_per_mission.get(goal_id)
         return [current] if current is not None else []
+
+    def pauses_as_unit(self, goal_id: bytes) -> bool:
+        """Missions with restart_on_resume set are paused/resumed as a single unit."""
+        return goal_id in self._unit_missions
 
     def _wait_until_resumed(self, goal_id: bytes, goal_handle: ServerGoalHandle) -> bool:
         """Blocks execute_cb's loop between subtasks while this mission is paused.
@@ -84,6 +95,8 @@ class Mission(SystemTask, CompositePauseTracker):
         result = self._build_result_stub(request)
 
         goal_id = bytes(goal_handle.goal_id.uuid)
+        if request.restart_on_resume:
+            self._unit_missions.add(goal_id)
         self._start_pause_tracking(goal_id)
         try:
             for i, (subtask, mission_result) in enumerate(zip(request.subtasks, result.mission_results)):
@@ -100,6 +113,13 @@ class Mission(SystemTask, CompositePauseTracker):
                 subtask_result = self.execute_task_cb(goal, goal_handle)
                 mission_result.task_status = subtask_result.task_status
                 mission_result.skipped = False
+
+                if request.restart_on_resume and goal_handle.is_cancel_requested:
+                    # Cancelled or paused: always end as CANCELED, whatever the subtask reported (a subtask's server
+                    # may abort instead of cancel). Aborting here would make this mission's ActionTaskClient treat
+                    # a pause as a real finish, aborting any mission this one runs in.
+                    goal_handle.canceled()
+                    return result
 
                 if subtask_result.task_status != TaskStatus.DONE:
                     if not subtask.allow_skipping or goal_handle.is_cancel_requested:
@@ -122,6 +142,7 @@ class Mission(SystemTask, CompositePauseTracker):
             return result
         finally:
             self._subtasks_per_mission.pop(goal_id, None)
+            self._unit_missions.discard(goal_id)
             self._stop_pause_tracking(goal_id)
 
     @staticmethod
@@ -138,8 +159,14 @@ class Mission(SystemTask, CompositePauseTracker):
         return result
 
     @staticmethod
-    def get_task_specs(topic: str) -> TaskSpecs:
-        """Returns TaskSpecs object that describes the task properties."""
+    def get_task_specs(topic: str, cancel_timeout: float = 5.0) -> TaskSpecs:
+        """Returns TaskSpecs object that describes the task properties.
+
+        :param topic: Action topic of the mission action server
+        :param cancel_timeout: How long cancelling the mission (or pausing one with restart_on_resume) may take. Must
+            exceed the cancel time of any of its subtasks, as the mission only finishes cancelling once its running
+            subtask has.
+        """
         return TaskSpecs(
             task_name="system/mission",
             blocking=False,
@@ -149,6 +176,7 @@ class Mission(SystemTask, CompositePauseTracker):
             reentrant=False,
             msg_interface=MissionAction,
             task_server_type=TaskServerType.ACTION,
+            cancel_timeout=cancel_timeout,
         )
 
     @staticmethod
