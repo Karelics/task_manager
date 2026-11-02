@@ -189,6 +189,42 @@ class TestActionTaskClient(unittest.TestCase):
         task_client._goal_done.set()
         self.assertRaises(PauseTaskFailedError, task_client.pause_task)
 
+    def _pause_with_goal_finishing_on_its_own(self, goal_status: int) -> ActionTaskClient:
+        """Pauses a task whose goal finishes on its own with goal_status before the pause-cancel takes effect."""
+        task_client = get_concat_action_task_client(result_concat_fields=[])
+        task_client.task_specs.cancel_timeout = 0.1
+        task_client.register_done_callback(self._done_cb)
+        task_client._goal_handle = Mock()
+
+        def goal_finishes():
+            goal_future = Future(executor=Mock())
+            goal_future._result = Fibonacci.Impl.GetResultService.Response(
+                status=goal_status, result=Fibonacci.Result(sequence=[0, 1])
+            )
+            task_client._goal_done_cb(goal_future)
+
+        with patch.object(task_client, "request_canceling", side_effect=goal_finishes):
+            task_client.pause_task()
+        return task_client
+
+    def test_pause_task_succeeds_if_goal_finishes_successfully_on_its_own(self):
+        """A goal that succeeds before the pause-cancel takes effect counts as a successful pause, like for services.
+
+        The task ends DONE with its real result and done callbacks.
+        """
+        task_client = self._pause_with_goal_finishing_on_its_own(GoalStatus.STATUS_SUCCEEDED)
+
+        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
+        self.assertTrue(task_client.goal_done)
+        self.assertTrue(self.cb_called)
+        self.assertFalse(task_client._pause_state.paused)
+
+    def test_pause_task_fails_if_goal_aborts_on_its_own(self):
+        """A goal that aborts before the pause-cancel takes effect is a failed pause."""
+        with self.assertRaises(PauseTaskFailedError):
+            self._pause_with_goal_finishing_on_its_own(GoalStatus.STATUS_ABORTED)
+        self.assertTrue(self.cb_called)
+
     def test_resume_task_noop_when_not_paused(self):
         """Resuming a task that isn't paused is a no-op success."""
         task_client = get_action_task_client("task_1")
