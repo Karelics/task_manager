@@ -98,9 +98,15 @@ class AtomicSequence(SystemTask):
                 subtask_result.skipped = False
 
                 if goal_handle.is_cancel_requested:
-                    # Cancelled or paused: always end as CANCELED, whatever the subtask reported (a subtask's server
-                    # may abort instead of cancel). Aborting here would make the atomic sequence's ActionTaskClient treat
-                    # a pause as a real finish, aborting any mission this atomic sequence runs in.
+                    if subtask_result.task_status == TaskStatus.IN_PROGRESS:
+                        # The subtask could not be cancelled and is still running. Reporting CANCELED would make a
+                        # pause look successful while the subtask keeps running, and resuming would then fail to
+                        # restart it with the same task_id. Abort instead, so the failed pause/cancel is visible.
+                        goal_handle.abort()
+                        return result
+                    # Cancelled or paused: end as CANCELED whatever the finished subtask reported (a subtask's server
+                    # may abort instead of cancel). Aborting here would make the atomic sequence's ActionTaskClient
+                    # treat a pause as a real finish, aborting any mission this atomic sequence runs in.
                     goal_handle.canceled()
                     return result
 

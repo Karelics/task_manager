@@ -146,6 +146,24 @@ class AtomicSequenceUnittest(unittest.TestCase):
         goal_handle.canceled.assert_called_once()
         goal_handle.abort.assert_not_called()
 
+    def test_cancel_aborts_if_subtask_cancel_failed(self):
+        """If the running subtask could not be cancelled (still IN_PROGRESS), the atomic sequence must abort instead of
+        reporting CANCELED, so that a pause isn't reported as successful while the subtask keeps running."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_fails(_goal, handle):
+            handle.is_cancel_requested = True
+            return result_with(TaskStatus.IN_PROGRESS)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_fails
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.abort.assert_called_once()
+        goal_handle.canceled.assert_not_called()
+        self.assertEqual(self.atomic_sequence.execute_task_cb.call_count, 1)
+        self.assertEqual(result.results[0].task_status, TaskStatus.IN_PROGRESS)
+
     def test_get_active_children_tracks_progress(self):
         """The currently running subtask is reported as the only active child, cleared once the atomic sequence
         finishes."""
