@@ -84,6 +84,13 @@ def subtask(task_id: str, task_name: str, run_time_tenths: int = 1) -> SubtaskGo
     return SubtaskGoal(task_id=task_id, task_name=task_name, task_data=json.dumps({"order": run_time_tenths}))
 
 
+def service_subtask(task_id: str, run_time_secs: int) -> SubtaskGoal:
+    """SubtaskGoal for the AddTwoInts service test task, which runs for a + b seconds."""
+    return SubtaskGoal(
+        task_id=task_id, task_name="add_two_ints_non_blocking", task_data=json.dumps({"a": run_time_secs, "b": 0})
+    )
+
+
 def atomic_sequence_subtask(task_id: str, subtasks: List[SubtaskGoal]) -> SubtaskGoal:
     """SubtaskGoal running the given subtasks in a system/atomic_sequence."""
     goal = AtomicSequence.Goal(subtasks=subtasks)
@@ -260,6 +267,81 @@ class AtomicSequenceTests(TaskManagerTestNode):
 
         self.assertEqual(mission_handle.get_result().result.task_status, TaskStatus.CANCELED)
         self._wait_until(lambda: "c1" not in self._active_clients())
+        self.assertEqual(self.nav_server.goals_received, 1)
+
+    def test_nested_atomic_sequence_pauses_outermost(self):
+        """Pausing a task inside an atomic sequence nested in another one pauses the outer atomic sequence, and resuming
+        reruns it from its first subtask, including the inner atomic sequence."""
+        inner = atomic_sequence_subtask("inner", [subtask("nav2", "nav"), subtask("work1", "work", run_time_tenths=20)])
+        mission_handle = self._start_mission([atomic_sequence_subtask("outer", [subtask("nav1", "nav"), inner])])
+        self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
+        mission_id = self._mission_id()
+
+        pause_response = self.execute_pause_task(["work1"])
+
+        self.assertEqual(json.loads(pause_response.result.task_result)["success"], True)
+        self._wait_for_status("outer", TaskStatus.PAUSED)
+        self._wait_for_status(mission_id, TaskStatus.PAUSED)
+        self.assertNotIn("inner", self._active_clients())
+        self.assertNotIn("work1", self._active_clients())
+        self.assertEqual(self.nav_server.goals_received, 2)
+
+        self.execute_resume_task(["outer"])
+
+        response = mission_handle.get_result()
+        self.assertEqual(response.status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(self.nav_server.goals_received, 4)
+        self.assertEqual(self.work_server.goals_received, 2)
+
+    def test_pause_waits_for_service_subtask_and_reruns_it(self):
+        """A service-backed subtask can't be cancelled: pausing waits for it to finish within its cancel_timeout, and
+        the atomic sequence then reruns it on resume."""
+        mission_handle = self._start_mission(
+            [atomic_sequence_subtask("c1", [service_subtask("svc1", run_time_secs=1), subtask("nav1", "nav")])]
+        )
+        self._wait_for_status("svc1", TaskStatus.IN_PROGRESS)
+
+        pause_response = self.execute_pause_task(["c1"])
+
+        self.assertEqual(json.loads(pause_response.result.task_result)["success"], True)
+        self._wait_for_status("c1", TaskStatus.PAUSED)
+        self.assertNotIn("svc1", self._active_clients())
+        self.assertEqual(self.nav_server.goals_received, 0)
+
+        self.execute_resume_task(["c1"])
+
+        self._wait_until(lambda: "svc1" in self._active_clients())  # The service subtask runs again
+        response = mission_handle.get_result()
+        self.assertEqual(response.status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(self.nav_server.goals_received, 1)
+
+    def test_pause_fails_if_service_subtask_outlives_cancel_timeout(self):
+        """A service-backed subtask still running after its cancel_timeout makes the pause fail and the atomic sequence
+        abort, instead of reporting PAUSED while the service keeps running."""
+        mission_handle = self._start_mission(
+            [atomic_sequence_subtask("c1", [service_subtask("svc1", run_time_secs=3), subtask("nav1", "nav")])]
+        )
+        self._wait_for_status("svc1", TaskStatus.IN_PROGRESS)
+
+        pause_response = self.execute_pause_task(["c1"])
+
+        self.assertEqual(json.loads(pause_response.result.task_result)["success"], False)
+        response = mission_handle.get_result()
+        self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
+        self.assertEqual(self.nav_server.goals_received, 0)
+        self._wait_until(lambda: "svc1" not in self._active_clients())  # Let the service call finish before teardown
+
+    def test_stop_while_paused(self):
+        """system/stop while an atomic sequence is paused cancels it and its mission, leaving nothing active."""
+        mission_handle = self._start_mission(self._two_pair_mission())
+        self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
+        self.execute_pause_task([self._mission_id()])
+        self._wait_for_status("c1", TaskStatus.PAUSED)
+
+        self.execute_stop_task()
+
+        self.assertEqual(mission_handle.get_result().result.task_status, TaskStatus.CANCELED)
+        self._wait_until(lambda: not self._active_clients())
         self.assertEqual(self.nav_server.goals_received, 1)
 
 
