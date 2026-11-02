@@ -129,6 +129,42 @@ class AtomicSequenceUnittest(unittest.TestCase):
         goal_handle.canceled.assert_called_once()
         goal_handle.succeed.assert_not_called()
 
+    def test_cancel_after_last_subtask_done_succeeds(self):
+        """A cancel (or pause) arriving after the last subtask already finished successfully is too late: the atomic
+        sequence succeeds instead of ending CANCELED, so that a resume doesn't rerun every subtask."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_during_last(_goal, handle):
+            if self.atomic_sequence.execute_task_cb.call_count == 2:
+                handle.is_cancel_requested = True
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_during_last
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.succeed.assert_called_once()
+        goal_handle.canceled.assert_not_called()
+        goal_handle.abort.assert_not_called()
+        self.assertEqual([r.task_status for r in result.results], [TaskStatus.DONE, TaskStatus.DONE])
+
+    def test_cancel_during_last_subtask_ends_canceled(self):
+        """If the last subtask itself got cancelled (didn't finish DONE), the atomic sequence still ends CANCELED."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_last(_goal, handle):
+            if self.atomic_sequence.execute_task_cb.call_count == 2:
+                handle.is_cancel_requested = True
+                return result_with(TaskStatus.CANCELED)
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_last
+
+        self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.canceled.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+
     def test_cancel_ends_canceled_even_if_subtask_aborts(self):
         """If the running subtask reports an error instead of CANCELED when the atomic sequence is cancelled (e.g. its
         server aborts on cancel), the atomic sequence must still end CANCELED, so that a pause is recognised as a

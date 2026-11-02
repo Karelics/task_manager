@@ -82,7 +82,7 @@ class AtomicSequence(SystemTask):
 
         goal_id = bytes(goal_handle.goal_id.uuid)
         try:
-            for subtask, subtask_result in zip(request.subtasks, result.results):
+            for i, (subtask, subtask_result) in enumerate(zip(request.subtasks, result.results)):
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return result
@@ -97,7 +97,12 @@ class AtomicSequence(SystemTask):
                 subtask_result.task_status = self.execute_task_cb(goal, goal_handle).task_status
                 subtask_result.skipped = False
 
-                if goal_handle.is_cancel_requested:
+                # A cancel/pause arriving after the last subtask already finished successfully is too late: the whole
+                # sequence is done, so succeed instead of ending CANCELED, which would make a resume rerun every
+                # subtask from the start.
+                all_done = i == len(request.subtasks) - 1 and subtask_result.task_status == TaskStatus.DONE
+
+                if goal_handle.is_cancel_requested and not all_done:
                     if subtask_result.task_status == TaskStatus.IN_PROGRESS:
                         # The subtask could not be cancelled and is still running. Reporting CANCELED would make a
                         # pause look successful while the subtask keeps running, and resuming would then fail to
