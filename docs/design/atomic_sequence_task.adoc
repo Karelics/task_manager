@@ -70,6 +70,8 @@ Properties:
 
 * Pausing works the same whether the request names the outer Mission, the atomic sequence, or any task running inside
   it, at any depth. The outermost atomic sequence is always paused as a whole.
+* Resuming accepts the same ids, and the id of any subtask of the atomic sequence at any depth, even one that was
+  cancelled by the pause or had already finished.
 * Opt-in per group: subtasks outside an atomic sequence keep the plain resume-in-place behaviour.
 * `Mission`, `Mission.action` and `SubtaskGoal` are unchanged.
 
@@ -277,7 +279,17 @@ note right of CC : continues exactly as\n"Pause by outer mission id"
 
 === Resume
 
-Resume by the atomic sequence's id or the enclosing Mission's id. The child that was running is no longer active.
+Resume by the atomic sequence's id, the enclosing Mission's id, or the id of any subtask of the atomic sequence.
+
+Subtasks are no longer active while the atomic sequence is paused: the running one was cancelled by the pause, and
+the others have either finished or not started yet. But the paused atomic sequence's `ActionTaskClient` still holds
+its goal message for the resume (`paused_goal`), and that goal lists every subtask with its task id. So when a resume
+names a task id that is not active, `ResumeTasksService` looks for a paused atomic sequence whose goal contains it,
+also inside nested Missions, parallel tasks and atomic sequences (`find_paused_unit_of` in `composite_resolution.py`),
+and resumes that atomic sequence instead. No extra state is kept for this.
+
+Subtasks sent without a task id get a new one generated on every run, so they can't be named. If two paused atomic
+sequences list the same task id, the request is not redirected.
 
 [plantuml, resume-flow, svg]
 ----
@@ -290,7 +302,8 @@ participant "AtomicSequence\nexecute_cb" as C
 participant "navigate_to_coordinates" as N
 participant "task_x" as X
 
-Operator -> Svc : resume([mission_id | atomic_sequence_id])
+Operator -> Svc : resume([mission_id | atomic_sequence_id | task_x_id])
+Svc -> Svc : task_x_id not active:\nfound in paused goal of\natomic sequence #1
 Svc -> M : request_resume(goal_id)\n(only when Mission is on the path)
 Svc -> CC : resume_task()
 CC -> C : re-send stored atomic sequence goal

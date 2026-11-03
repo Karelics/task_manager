@@ -189,7 +189,7 @@ class AtomicSequenceTests(TaskManagerTestNode):
         mission_handle = self._start_mission(self._two_pair_mission(work_task))
         self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
         mission_id = self._mission_id()
-        targets = {"mission": mission_id, "atomic_sequence": "c1", "child": "work1"}
+        targets = {"mission": mission_id, "atomic_sequence": "c1", "child": "work1", "finished_child": "nav1"}
 
         pause_response = self.execute_pause_task([targets[pause_target]])
 
@@ -219,6 +219,19 @@ class AtomicSequenceTests(TaskManagerTestNode):
     def test_pause_by_child_id(self):
         """Pausing the atomic sequence's running child pauses the whole atomic sequence instead of just the child."""
         self._assert_pause_resume_reruns_first_step("child", "atomic_sequence")
+
+    def test_pause_and_resume_by_child_id(self):
+        """Resuming by the id of the child that was running when it was paused resumes its atomic sequence, even though
+        the child itself was cancelled with it."""
+        self._assert_pause_resume_reruns_first_step("child", "child")
+
+    def test_pause_by_mission_resume_by_child_id(self):
+        """Resuming by the id of a child that was running inside the atomic sequence works whichever id was paused."""
+        self._assert_pause_resume_reruns_first_step("mission", "child")
+
+    def test_resume_by_finished_child_id(self):
+        """Resuming by the id of a subtask that had already finished before the pause resumes its atomic sequence."""
+        self._assert_pause_resume_reruns_first_step("mission", "finished_child")
 
     def test_pause_by_mission_resume_by_atomic_sequence(self):
         """Resuming via the atomic sequence also clears the paused flag the mission got when it was paused by its own
@@ -292,6 +305,37 @@ class AtomicSequenceTests(TaskManagerTestNode):
         self.assertEqual(response.status, GoalStatus.STATUS_SUCCEEDED)
         self.assertEqual(self.nav_server.goals_received, 4)
         self.assertEqual(self.work_server.goals_received, 2)
+
+    def test_resume_nested_atomic_sequence_by_inner_id(self):
+        """The inner atomic sequence is cancelled when the outer one is paused, but resuming by its id still resumes the
+        outer one."""
+        inner = atomic_sequence_subtask("inner", [subtask("nav2", "nav"), subtask("work1", "work", run_time_tenths=20)])
+        mission_handle = self._start_mission([atomic_sequence_subtask("outer", [subtask("nav1", "nav"), inner])])
+        self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
+        self.execute_pause_task(["work1"])
+        self._wait_for_status("outer", TaskStatus.PAUSED)
+
+        resume_response = self.execute_resume_task(["inner"])
+
+        resume_result = json.loads(resume_response.result.task_result)
+        self.assertEqual(resume_result["success"], True)
+        self.assertEqual(resume_result["successful_resumes"], ["inner"])
+        self.assertEqual(mission_handle.get_result().status, GoalStatus.STATUS_SUCCEEDED)
+        self.assertEqual(self.nav_server.goals_received, 4)
+
+    def test_resume_by_child_id_fails_after_cancel(self):
+        """Once the paused atomic sequence has been cancelled, its children can no longer be resumed."""
+        mission_handle = self._start_mission(self._two_pair_mission())
+        self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
+        mission_id = self._mission_id()
+        self.execute_pause_task(["work1"])
+        self._wait_for_status("c1", TaskStatus.PAUSED)
+        self.execute_cancel_task([mission_id])
+        self.assertEqual(mission_handle.get_result().result.task_status, TaskStatus.CANCELED)
+
+        resume_response = self.execute_resume_task(["work1"])
+
+        self.assertEqual(json.loads(resume_response.result.task_result)["success"], False)
 
     def test_pause_waits_for_service_subtask_and_reruns_it(self):
         """A service-backed subtask can't be cancelled: pausing waits for it to finish within its cancel_timeout, and

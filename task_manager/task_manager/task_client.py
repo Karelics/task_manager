@@ -66,6 +66,14 @@ class TaskClient(ABC):
         yet.
         """
 
+    @property
+    def paused_goal(self) -> Optional[Any]:
+        """The goal message resume_task() will re-send, while the task is paused, otherwise None.
+
+        Always None for task types that can't be paused.
+        """
+        return None
+
     @abstractmethod
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
@@ -154,6 +162,11 @@ class ActionTaskClient(TaskClient):
     @property
     def goal_done(self) -> bool:
         return self._goal_done.is_set()
+
+    @property
+    def paused_goal(self) -> Optional[Any]:
+        """The goal message resume_task() will re-send, while the task is paused, otherwise None."""
+        return self._pause_state.last_goal_message if self._pause_state.paused else None
 
     @property
     def goal_id(self) -> Optional[Any]:

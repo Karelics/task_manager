@@ -22,7 +22,11 @@ into them, so they are paused/resumed as a whole leaf. They are only consulted t
 their (possibly deeply nested) children up to the outermost such unit.
 """
 
-from typing import Callable, Dict, List, Optional, Tuple
+import json
+from typing import Callable, Collection, Dict, Iterator, List, Optional, Tuple
+
+# Thirdparty
+from rosbridge_library.internal.message_conversion import extract_values
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
@@ -48,6 +52,45 @@ def _composite_active_children(
     if goal_id is None:
         return []
     return tracker.get_active_children(bytes(goal_id.uuid))
+
+
+def _subtask_ids(goal: dict, composite_names: Collection[str]) -> Iterator[str]:
+    """Yields the task_id of every subtask in a composite goal (as a dict with a "subtasks" list of SubtaskGoals), and
+    recursively of the subtasks of nested composite subtasks, whose goals are in their JSON task_data."""
+    for subtask in goal.get("subtasks", []):
+        if subtask.get("task_id"):
+            yield subtask["task_id"]
+        if subtask.get("task_name") not in composite_names:
+            continue
+        try:
+            nested_goal = json.loads(subtask.get("task_data") or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(nested_goal, dict):
+            yield from _subtask_ids(nested_goal, composite_names)
+
+
+def find_paused_unit_of(
+    task_id: str,
+    active_tasks: ActiveTasks,
+    composites: Dict[str, "CompositePauseTracker"],
+    units: Dict[str, "ActiveChildrenProvider"],
+) -> Optional[str]:
+    """Returns the task_id of the paused unit (e.g. AtomicSequence) whose goal contains task_id as a subtask, at any
+    depth, or None if there is no single such unit.
+
+    Pausing a unit cancels the tasks running inside it, so they are no longer active. The paused unit still holds its
+    goal message for the resume, which lists all its subtasks with their task_ids - looking task_id up there lets a
+    resume name any of them. Subtasks sent without a task_id get one generated per run, so they can't be found.
+    """
+    composite_names = set(composites) | set(units)
+    matches = []
+    for task_name in units:
+        for client in active_tasks.get_active_tasks_by_name(task_name):
+            goal = client.paused_goal
+            if goal is not None and task_id in _subtask_ids(extract_values(goal), composite_names):
+                matches.append(client.task_details.task_id)
+    return matches[0] if len(matches) == 1 else None
 
 
 def resolve_down(
