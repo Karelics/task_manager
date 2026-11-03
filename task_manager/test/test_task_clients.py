@@ -46,7 +46,7 @@ from task_manager.task_client import (
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
-# pylint: disable=protected-access
+# pylint: disable=protected-access, too-many-public-methods
 
 
 class TestActionTaskClient(unittest.TestCase):
