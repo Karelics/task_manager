@@ -14,6 +14,7 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 import json
+import time
 import unittest
 
 # Thirdparty
@@ -510,6 +511,14 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(stop_response.result.task_result, json.dumps({"success": True}))
         self.assertEqual(mission_result.task_status, TaskStatus.CANCELED)
         self.assertEqual(self.task_manager_node.active_tasks.get_active_tasks(), [])
+
+        # The slow action server is still canceling the goal in the background. Wait for it to finish, so that it
+        # doesn't try to publish its status after the nodes have been destroyed in tearDown.
+        slow_server = self.test_tasks_node.fib_cancel_on_stop_server
+        start = time.time()
+        while any(goal_handle.is_active for goal_handle in list(slow_server._goal_handles.values())):
+            self.assertLess(time.time() - start, 5.0, "Slow action server did not finish canceling")
+            time.sleep(0.05)
 
 
 if __name__ == "__main__":
