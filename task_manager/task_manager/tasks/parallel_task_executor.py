@@ -234,15 +234,13 @@ class ParallelTaskExecutor(SystemTask, CompositePauseTracker):
             except CancelTaskFailedError as e:
                 self._logger.error(f"Failed to cancel task '{task.name}': {repr(e)}")
 
+        # Tasks that are allowed to continue after the cancel don't need to be waited for
         cancel_timeout_start = time.time()
         while rclpy.ok() and (time.time() - cancel_timeout_start < self._timeout):
-            if all(task.has_finished() for task in subtasks):
+            if all(task.has_finished() or not task.require_finish_on_parallel_cancel() for task in subtasks):
                 return True
             time.sleep(0.1)
 
-        # Check if some task is still running but is allowed to continue running after cancelation
-        if all(task.has_finished() or not task.require_finish_on_parallel_cancel() for task in subtasks):
-            return True
         return False
 
     def _get_results(self, subtasks: List[ParallelTask], result: PerformInParallel.Result) -> Tuple[bool, bool]:
