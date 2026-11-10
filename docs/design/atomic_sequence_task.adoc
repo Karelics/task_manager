@@ -1,0 +1,318 @@
+= `system/atomic_sequence`: Restart-on-Resume Task Groups
+:toc: left
+:toclevels: 2
+:sectnums:
+:source-highlighter: rouge
+
+[abstract]
+`system/atomic_sequence` runs a short list of subtasks in order and is paused and resumed *as one unit*. Resuming a
+paused atomic sequence reruns it from its first subtask, so a `navigate_to_coordinates` + `task_x` pair always
+navigates again before `task_x` restarts.
+
+== Why
+
+A typical mission is a chain of pairs, where each work task depends on the navigation step before it:
+
+----
+Mission[ nav_A, task_x, nav_B, task_y, ... ]
+----
+
+Pausing a plain Mission pauses only the subtask that is currently running. Pausing an action-backed task cancels its
+goal and stores the goal message; resuming re-sends the same goal (`ActionTaskClient.pause_task()` /
+`resume_task()` in `task_client.py`). That breaks such pairs if `task_x` is paused, the robot is moved (teleop, pushed, another task), then resumed. The same `task_x` goal is re-sent and executed at the robot's *new* position.
+
+.Plain Mission: resuming re-sends `task_x` at the wrong place
+[plantuml, plain-mission-pause-flow, svg]
+----
+@startuml
+skinparam sequenceMessageAlign center
+actor Operator
+participant "PauseTasksService /\nResumeTasksService" as Svc
+participant "Mission\n(execute_cb)" as Mission
+participant "ActionTaskClient\n(task_x)" as Client
+participant "task_x\naction server" as Server
+participant Robot
+
+Mission -> Client : start task_x (after nav_A DONE)
+Client -> Server : send goal
+== Pause ==
+Operator -> Svc : pause(mission_id)
+Svc -> Svc : resolve_down(mission) -> [task_x]
+Svc -> Client : pause_task()
+Client -> Server : cancel goal
+Server --> Client : CANCELED (done cb suppressed)
+Client -> Client : status = PAUSED\nstore goal msg
+== While paused ==
+Operator -> Robot : moves robot elsewhere
+== Resume ==
+Operator -> Svc : resume(mission_id)
+Svc -> Client : resume_task()
+Client -> Server : re-send SAME goal
+Server -> Robot : performs task_x\n**at wrong position**
+@enduml
+----
+
+Wrapping each pair in an atomic sequence, `Mission[ AtomicSequence[nav_A, task_x], AtomicSequence[nav_B, task_y] ]`,
+makes a pause anywhere inside a pair restart that pair from its navigation step.
+
+== Overview
+
+An atomic sequence is a *pause leaf*: the pause/resume services never descend into it. Pausing it uses the regular
+`ActionTaskClient.pause_task()` on the atomic sequence's own goal:
+
+. The atomic sequence goal is cancelled. Its `execute_cb` cancels the running child and ends `canceled()`.
+. The atomic sequence's `ActionTaskClient` marks it `PAUSED` and keeps the goal message.
+. Resume re-sends that goal, so `execute_cb` runs again from subtask 0.
+
+The restart needs no dedicated code: it falls out of the cancel-and-resend pause model used for every action task.
+
+Properties:
+
+* Pausing works the same whether the request names the outer Mission, the atomic sequence, or any task running inside
+  it, at any depth. The outermost atomic sequence is always paused as a whole.
+* Resuming accepts the same ids, and the id of any subtask of the atomic sequence at any depth, even one that was
+  cancelled by the pause or had already finished.
+* Opt-in per group: subtasks outside an atomic sequence keep the plain resume-in-place behaviour.
+* `Mission`, `Mission.action` and `SubtaskGoal` are unchanged.
+
+Limitations:
+
+* Every resume reruns from step 0. Nothing detects whether the robot actually moved; navigating to where the robot
+  already is costs little.
+* Subtasks must be safe to run again from scratch.
+* Progress is not persisted across TaskManager restarts.
+
+== Usage
+
+[source,json]
+----
+{
+  "task_name": "system/mission",
+  "task_data": {
+    "subtasks": [
+      {"task_name": "system/atomic_sequence", "task_data": "{\"subtasks\": [
+          {\"task_name\": \"navigate_to_coordinates\", \"task_data\": \"{...A...}\"},
+          {\"task_name\": \"task_x\", \"task_data\": \"{...}\"}]}"},
+      {"task_name": "system/atomic_sequence", "task_data": "{\"subtasks\": [
+          {\"task_name\": \"navigate_to_coordinates\", \"task_data\": \"{...B...}\"},
+          {\"task_name\": \"task_y\", \"task_data\": \"{...}\"}]}"}
+    ]
+  }
+}
+----
+
+(Line breaks inside the JSON strings are for readability only.)
+
+
+== Interface
+
+`task_manager_msgs/action/AtomicSequence.action` reuses the Mission message types:
+
+----
+SubtaskGoal[] subtasks
+---
+SubtaskResult[] results
+---
+----
+
+`allow_skipping` on a `SubtaskGoal` has its Mission meaning: a failed skippable step does not abort the atomic
+sequence. `results` lists the end status of every subtask of the last run.
+
+Task specs:
+
+[cols="1,1,3"]
+|===
+|Field |Value |Reason
+
+|`task_name` |`system/atomic_sequence` |
+|`blocking` |`False` |Same as Mission; blocking-ness comes from children.
+|`cancel_on_stop` |`True` |`system/stop` cancels it and, through it, the running child.
+|`reentrant` |`True` |Sibling or nested atomic sequences must not cancel each other as same-type duplicates.
+|`task_server_type` |`ACTION` |Pause = cancel goal, resume = re-send goal.
+|`cancel_timeout` |max of all declared tasks' `cancel_timeout` + 1 s |Must exceed the child's cancel time, otherwise a
+timed-out pause would turn into a mission abort.
+|===
+
+== Lifecycle
+
+The atomic sequence has no pause state of its own; `PAUSED` is owned by its `ActionTaskClient`.
+
+.AtomicSequence states as seen in `/task_manager/active_tasks`
+[plantuml, atomic-sequence-states, svg]
+----
+@startuml
+hide empty description
+[*] --> IN_PROGRESS : goal sent
+state IN_PROGRESS {
+  [*] --> Step0
+  Step0 : navigate_to_coordinates
+  Step1 : task_x
+  Step0 --> Step1 : DONE
+}
+IN_PROGRESS --> DONE : last step DONE\n(also when a pause arrives\nafter it finished)
+IN_PROGRESS --> ERROR : step failed and\nnot allow_skipping,\nor running child could\nnot be cancelled
+IN_PROGRESS --> PAUSED : pause request\n(goal cancelled, child cancelled,\ngoal msg stored)
+PAUSED --> IN_PROGRESS : resume request\n(same goal re-sent,\nrestarts at Step0)
+PAUSED --> CANCELED : cancel / stop
+IN_PROGRESS --> CANCELED : cancel / stop
+DONE --> [*]
+ERROR --> [*]
+CANCELED --> [*]
+@enduml
+----
+
+== Execution
+
+Each subtask is started through `TaskManager.execute_task()`, like a Mission subtask. Its
+`_wait_for_task_finish` calls `cancel_task()` on the running child as soon as the atomic sequence goal is cancelled,
+so cancelling or pausing the atomic sequence cancels its child without extra code. `_current_child` is what
+`get_active_children()` reports, used to redirect a pause of the child up to its atomic sequence.
+
+== Pausing and resuming
+
+=== Target resolution
+
+A pause or resume request names one task id, but the task that is actually paused may be a different one. Target
+resolution finds it in two steps: first go *up* from the named task to the group it belongs to, then go *down* from
+that group to the tasks that are currently running. Missions and parallel tasks are looked into on the way down,
+atomic sequences are not, so a running atomic sequence is always paused as a whole.
+
+For example, in `Mission[ AtomicSequence[nav_A, task_x], AtomicSequence[nav_B, task_y] ]` with `task_x` running,
+naming the Mission, the first atomic sequence or `task_x` all end up pausing the first atomic sequence (and marking
+the Mission as paused).
+
+In the code (`composite_resolution.py`), the task types are kept in two registries:
+
+* `composites` (`system/mission`, `system/perform_in_parallel`): pause descends into their active children.
+* `units` (`system/atomic_sequence`): only used when going up from a child; never descended into.
+
+.Resolving a pause/resume request to leaf task ids
+[plantuml, resolution-activity, svg]
+----
+@startuml
+start
+:pause/resume request for task_id;
+if (task_id is, or is nested at any depth in,\nan AtomicSequence? (_find_outermost_unit)) then (yes)
+  :task_id = outermost AtomicSequence;
+endif
+if (task_id is an active child of a\nMission / Parallel?) then (yes)
+  :start = that composite\n(one hop up);
+else (no)
+  :start = task_id;
+endif
+:resolve_down(start);
+repeat
+  if (task is in composites\n(Mission / Parallel)?) then (yes)
+    :arm/disarm its paused flag;
+    :descend into active children;
+  else (no: plain task or AtomicSequence)
+    :emit task_id as leaf;
+  endif
+repeat while (more children to expand?)
+:pause_task() / resume_task()\non every leaf ActionTaskClient;
+:_sync_composite_statuses();
+stop
+@enduml
+----
+
+Walking all the way up matters for tasks nested deeper inside an atomic sequence, e.g.
+`AtomicSequence[nav, Parallel[x, y]]`: pausing `x` must pause the whole atomic sequence, not just the Parallel.
+Redirecting from the outermost atomic sequence on to its enclosing Mission keeps the Mission's paused flag consistent
+whichever id is named.
+
+=== Pause by outer mission id
+
+[plantuml, pause-by-mission, svg]
+----
+@startuml
+actor Operator
+participant "PauseTasksService" as Svc
+participant "Mission" as M
+participant "ActionTaskClient\n(atomic sequence #1)" as CC
+participant "AtomicSequence\nexecute_cb" as C
+participant "TaskManager\n_wait_for_task_finish" as W
+participant "ActionTaskClient\n(task_x)" as XC
+
+note over C, XC : nav_A already DONE, task_x running
+Operator -> Svc : pause([mission_id])
+Svc -> M : request_pause(goal_id)\n(arm Mission flag)
+Svc -> Svc : resolve_down(mission)\n-> active child = atomic sequence #1\n-> atomic sequence is a leaf
+Svc -> CC : pause_task()
+CC -> C : cancel atomic sequence goal
+C -> W : goal_handle.is_cancel_requested
+W -> XC : cancel_task()
+XC --> W : CANCELED
+W --> C : task_x CANCELED
+C -> C : goal_handle.canceled()
+C --> CC : result CANCELED
+CC -> CC : status = PAUSED\n(done cb suppressed,\ngoal msg stored)
+Svc -> Svc : _sync_composite_statuses()\n-> Mission PAUSED
+Svc --> Operator : success, [mission_id]
+@enduml
+----
+
+=== Pause by child id (`task_x`)
+
+The child id is redirected up to its atomic sequence, which is then treated as a leaf. Without this, `task_x` alone
+would be paused and resumed in place.
+
+[plantuml, pause-by-child, svg]
+----
+@startuml
+actor Operator
+participant "PauseTasksService" as Svc
+participant "composite_resolution" as R
+participant "AtomicSequence" as C
+participant "ActionTaskClient\n(atomic sequence #1)" as CC
+
+Operator -> Svc : pause([task_x_id])
+Svc -> R : _resolve_start_id(task_x_id)
+R -> C : get_active_children(goal_id)
+C --> R : [task_x_id]
+R -> R : outermost atomic sequence = atomic sequence #1;\nits enclosing Mission -> start = mission
+Svc -> R : resolve_down(mission)\n(arms Mission flag)
+R --> Svc : [atomic sequence #1] (leaf)
+Svc -> CC : pause_task()
+note right of CC : continues exactly as\n"Pause by outer mission id"
+@enduml
+----
+
+=== Resume
+
+Resume by the atomic sequence's id, the enclosing Mission's id, or the id of any subtask of the atomic sequence.
+
+Subtasks are no longer active while the atomic sequence is paused: the running one was cancelled by the pause, and
+the others have either finished or not started yet. But the paused atomic sequence's `ActionTaskClient` still holds
+its goal message for the resume (`paused_goal`), and that goal lists every subtask with its task id. So when a resume
+names a task id that is not active, `ResumeTasksService` looks for a paused atomic sequence whose goal contains it,
+also inside nested Missions, parallel tasks and atomic sequences (`find_paused_unit_of` in `composite_resolution.py`),
+and resumes that atomic sequence instead. No extra state is kept for this.
+
+Subtasks sent without a task id get a new one generated on every run, so they can't be named. If two paused atomic
+sequences list the same task id, the request is not redirected.
+
+[plantuml, resume-flow, svg]
+----
+@startuml
+actor Operator
+participant "ResumeTasksService" as Svc
+participant "Mission" as M
+participant "ActionTaskClient\n(atomic sequence #1)" as CC
+participant "AtomicSequence\nexecute_cb" as C
+participant "navigate_to_coordinates" as N
+participant "task_x" as X
+
+Operator -> Svc : resume([mission_id | atomic_sequence_id | task_x_id])
+Svc -> Svc : task_x_id not active:\nfound in paused goal of\natomic sequence #1
+Svc -> M : request_resume(goal_id)\n(only when Mission is on the path)
+Svc -> CC : resume_task()
+CC -> C : re-send stored atomic sequence goal
+C -> N : step 0: navigate to A
+N --> C : DONE
+C -> X : step 1: task_x
+X --> C : DONE
+C --> CC : SUCCEEDED
+CC --> M : atomic sequence DONE
+M -> M : next subtask: atomic sequence #2
+@enduml
+----

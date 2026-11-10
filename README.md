@@ -22,10 +22,11 @@ Task Manager is your solution!
 3. [Result tracking](#result-tracking)
 4. [Missions](#missions)
 5. [Parallel Tasks](#parallel-tasks)
-6. [Task Cancelling](#task-cancelling)
-7. [Task Pausing](#task-pausing)
-8. [Global STOP-task](#stop)
-9. [Wait task](#wait)
+6. [Atomic Sequences](#atomic-sequences)
+7. [Task Cancelling](#task-cancelling)
+8. [Task Pausing](#task-pausing)
+9. [Global STOP-task](#stop)
+10. [Wait task](#wait)
 
 
 ### Tasks <a name="tasks"></a>
@@ -96,6 +97,12 @@ ParallelTasks can be started by calling `system/perform_in_parallel`. Its result
 
 When cancelling the remaining tasks, Task Manager waits up to `parallel_executor_task.cancel_timeout` seconds for them to finish. A task that is known to take longer to react to a cancel can set `require_finish_on_parallel_cancel: False`. This will allow the task to continue running after parallel task has been cancelled without setting the whole parallel task to error status.
 
+### Atomic Sequences <a name="atomic-sequences"></a>
+An AtomicSequence runs its subtasks sequentially, like a Mission, but is paused and resumed as a single unit and always restarts from its first subtask when resumed. Use it for groups of tasks where a step relies on the previous one having just been completed, for example navigating to a location and then performing an inspection task there. If the inspection task gets paused and robot is moved away before resuming, the inspection task would continue from a wrong location, unless AtomicSequence is used, which will now complete the navigation task again to reach the correct location for the inspection task.
+
+AtomicSequences are typically used as Mission subtasks, `Mission[AtomicSequence[navigate_A, task_x], AtomicSequence[navigate_B, task_y]]`, and can be started by calling `system/atomic_sequence`. Its result lists the end status of every subtask of the last run, and `allow_skipping` works the same as in a Mission.
+
+Pausing the AtomicSequence by its own Task ID, by the Task ID of the Mission it runs in, or by the Task ID of any task running inside it (at any depth), pauses the whole outermost AtomicSequence: its running subtask is cancelled and the AtomicSequence gets the `PAUSED` status. Resume it by its own Task ID, by the Mission's, or by the Task ID of any of its subtasks at any depth, even one that was cancelled by the pause or had already finished. Subtasks sent without a Task ID can't be named this way. A pause can only complete once the running subtask has been cancelled, so the AtomicSequence's cancel timeout is derived from the longest `cancel_timeout` of all declared tasks. If the running subtask can't be cancelled within its `cancel_timeout`, the pause fails and the AtomicSequence aborts, rather than reporting `PAUSED` while the subtask keeps running. A pause that arrives only after the last subtask has already finished is too late for the AtomicSequence: it finishes as `DONE`, the pause is reported as successful, and an enclosing Mission pauses before starting its next subtask.
 
 ### Task Cancelling <a name="task-cancelling"></a>
 Tasks can be cancelled by calling a `system/cancel_task` task with the Task IDs that should be cancelled. This provides an easy way to cancel any executing task, no matter which ROS Node started it.
@@ -112,11 +119,11 @@ A paused task:
 - is excluded from the blocking-task check, so a new blocking task can start while another one sits paused,
 - can still be cancelled with `system/cancel_task` or `system/stop`, which finishes it as `CANCELED`.
 
-**Action-backed tasks.** ROS 2 actions have no native pause mechanism, so pausing an action-backed task cancels its underlying goal, remembering the original goal data. Resuming sends that same goal again as a new one, i.e. execution restarts from scratch rather than continuing where it left off. The partial result the action server returns on each pause is kept: fields listed in the task's `result_concat_fields` parameter are concatenated across all paused segments into the task's final result, while unlisted fields keep only the final segment's value.
+**Action-backed tasks.** ROS 2 actions have no native pause mechanism, so pausing an action-backed task cancels its underlying goal, remembering the original goal data. Resuming sends that same goal again as a new one, i.e. execution restarts from scratch rather than continuing where it left off. The partial result the action server returns on each pause is kept: fields listed in the task's `result_concat_fields` parameter are concatenated across all paused segments into the task's final result, while unlisted fields keep only the final segment's value. If the goal completes successfully on its own before the cancel takes effect, the pause is reported as successful even though the task ended up `DONE` rather than `PAUSED`, the same as for service-backed tasks.
 
 **Service-backed tasks.** ROS services cannot be cancelled mid-flight, so pausing one waits up to the task's `cancel_timeout` for the call to finish naturally. If it finishes within that time, the pause is reported as successful (even though the task ended up `DONE` rather than `PAUSED`). Only a call that takes longer is reported as a failed pause.
 
-**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth.
+**Missions and parallel tasks.** Pausing a Mission or a `system/perform_in_parallel` task by its own Task ID pauses whichever of its subtasks are currently active, and the composite task itself is reported as `PAUSED`. Pausing one of those subtasks directly has the same result: the whole group is paused together. Resuming works the same way. A paused Mission does not start its next subtask until it is explicitely resumed. If a service-backed subtask subtask is paused, it runs to completion and then the Mission waits for resume. Nested composite tasks behave the same way at any depth. [Atomic Sequences](#atomic-sequences) are the exception: they are paused as a whole and restart from their first subtask when resumed.
 
 Pausing and resuming is best-effort: if some tasks in the request fail to pause or resume, the call reports `success: False` and lists only the successful Task IDs. The succeeded parts of the failed operation are not rolled back.
 
@@ -162,6 +169,7 @@ The following tasks are available by default from the Task Manager
 |--------------------|---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
 | system/mission     | Starts a mission.                                                                                             | [Mission](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/Mission.action)   |
 | system/perform_in_parallel | Runs the given tasks in parallel. When one of them finishes, the others are cancelled.                | [PerformInParallel](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/PerformInParallel.action) |
+| system/atomic_sequence | Runs the given tasks sequentially, paused and resumed as one unit that restarts from its first task.          | [AtomicSequence](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/action/AtomicSequence.action) |
 | system/cancel_task | Cancels the given tasks by Task ID.                                                                           | [CancelTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/CancelTasks.srv) |
 | system/pause_task  | Pauses the given tasks by Task ID. Optionally records who paused them in `paused_by`.                                                                       | [PauseTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/PauseTasks.srv)   |
 | system/resume_task | Resumes the given previously paused tasks by Task ID.                                                         | [ResumeTasks](https://github.com/Karelics/task_manager/blob/main/task_manager_msgs/srv/ResumeTasks.srv) |

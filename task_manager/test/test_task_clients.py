@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 
 import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -45,7 +46,7 @@ from task_manager.task_client import (
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
-# pylint: disable=protected-access
+# pylint: disable=protected-access, too-many-public-methods
 
 
 class TestActionTaskClient(unittest.TestCase):
@@ -188,6 +189,61 @@ class TestActionTaskClient(unittest.TestCase):
         task_client = get_action_task_client("task_1")
         task_client._goal_done.set()
         self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+
+    def _pause_with_goal_finishing_on_its_own(self, goal_status: int) -> ActionTaskClient:
+        """Pauses a task whose goal finishes on its own with goal_status before the pause-cancel takes effect."""
+        task_client = get_concat_action_task_client(result_concat_fields=[])
+        task_client.task_specs.cancel_timeout = 5.0
+        task_client.register_done_callback(self._done_cb)
+        task_client._goal_handle = Mock()
+
+        def goal_finishes():
+            goal_future = Future(executor=Mock())
+            goal_future._result = Fibonacci.Impl.GetResultService.Response(
+                status=goal_status, result=Fibonacci.Result(sequence=[0, 1])
+            )
+            task_client._goal_done_cb(goal_future)
+
+        start = time.monotonic()
+        try:
+            with patch.object(task_client, "request_canceling", side_effect=goal_finishes):
+                task_client.pause_task()
+        finally:
+            # Must not wait out the cancel_timeout once the goal has finished.
+            self.assertLess(time.monotonic() - start, 1.0)
+        return task_client
+
+    def test_pause_task_succeeds_if_goal_finishes_successfully_on_its_own(self):
+        """A goal that succeeds before the pause-cancel takes effect counts as a successful pause, like for services.
+
+        The task ends DONE with its real result and done callbacks.
+        """
+        task_client = self._pause_with_goal_finishing_on_its_own(GoalStatus.STATUS_SUCCEEDED)
+
+        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
+        self.assertTrue(task_client.goal_done)
+        self.assertTrue(self.cb_called)
+        self.assertFalse(task_client._pause_state.paused)
+
+    def test_pause_task_fails_if_goal_aborts_on_its_own(self):
+        """A goal that aborts before the pause-cancel takes effect is a failed pause."""
+        with self.assertRaises(PauseTaskFailedError):
+            self._pause_with_goal_finishing_on_its_own(GoalStatus.STATUS_ABORTED)
+        self.assertTrue(self.cb_called)
+
+    def test_goal_done_cb_does_not_set_pause_done_without_pause(self):
+        """A goal finishing normally, without a pause in progress, must not touch the pause_done event."""
+        task_client = get_action_task_client("task_1")
+        pause_done = task_client._pause_state.pause_done
+        goal_future = Future(executor=Mock())
+        goal_future._result = Fibonacci.Impl.GetResultService.Response(
+            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[0, 1])
+        )
+
+        task_client._goal_done_cb(goal_future)
+
+        self.assertTrue(task_client.goal_done)
+        self.assertFalse(pause_done.is_set())
 
     def test_resume_task_noop_when_not_paused(self):
         """Resuming a task that isn't paused is a no-op success."""

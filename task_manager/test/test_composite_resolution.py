@@ -14,22 +14,29 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
+import json
 import unittest
 from unittest.mock import Mock
 
+# Thirdparty
+from rosbridge_library.internal.message_conversion import extract_values
+
 # Task Manager messages
-from task_manager_msgs.msg import TaskStatus
+from task_manager_msgs.action import AtomicSequence as AtomicSequenceAction
+from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import ActionTaskClient, TaskClient
 from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
+from task_manager.tasks.atomic_sequence import AtomicSequence
 from task_manager.tasks.composite_resolution import (
     _find_enclosing_composite,
     _resolve_start_id,
     _resolve_target_task_ids,
     _sync_composite_statuses,
+    find_paused_unit_of,
     pause_or_resume_group,
     resolve_down,
 )
@@ -40,6 +47,7 @@ from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 
 MISSION = "system/mission"
 PARALLEL = "system/perform_in_parallel"
+ATOMIC_SEQUENCE = "system/atomic_sequence"
 
 
 # pylint: disable=duplicate-code
@@ -475,6 +483,173 @@ class PauseOrResumeGroupTests(unittest.TestCase):
 
         callback.assert_not_called()
         self.assertTrue(success)
+
+
+class AtomicSequenceResolutionTests(unittest.TestCase):
+    """Unit tests for resolving pause/resume requests around pause-as-a-unit AtomicSequences."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.mission = Mock(spec=Mission)
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.atomic_sequence = Mock(spec=AtomicSequence)
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
+        self.units = {ATOMIC_SEQUENCE: self.atomic_sequence}
+
+    def _children(self, tracker, mapping):
+        tracker.get_active_children.side_effect = lambda goal_id: {
+            bytes([byte] * 16): children for byte, children in mapping.items()
+        }.get(goal_id, [])
+
+    def test_atomic_sequence_resolves_to_itself(self):
+        """An atomic sequence is a leaf: resolution never descends into it."""
+        self.active_tasks.add(make_composite_client("c1", ATOMIC_SEQUENCE, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.atomic_sequence, {1: ["x"]})
+
+        self.assertEqual(_resolve_target_task_ids("c1", self.active_tasks, self.composites, units=self.units), ["c1"])
+
+    def test_child_redirects_up_to_its_atomic_sequence(self):
+        """Pausing an atomic sequence's running child pauses the atomic sequence instead."""
+        self.active_tasks.add(make_composite_client("c1", ATOMIC_SEQUENCE, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.atomic_sequence, {1: ["x"]})
+
+        self.assertEqual(_resolve_target_task_ids("x", self.active_tasks, self.composites, units=self.units), ["c1"])
+
+    def test_mission_descends_to_atomic_sequence_and_stops(self):
+        """A Mission resolves down to its running atomic sequence, not to the atomic sequence's child."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("c1", ATOMIC_SEQUENCE, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["c1"]})
+        self._children(self.atomic_sequence, {2: ["x"]})
+
+        self.assertEqual(_resolve_target_task_ids("m1", self.active_tasks, self.composites, units=self.units), ["c1"])
+        self.assertEqual(_resolve_target_task_ids("x", self.active_tasks, self.composites, units=self.units), ["c1"])
+
+    def test_deeply_nested_child_redirects_up_to_outermost_atomic_sequence(self):
+        """A child nested several levels inside an atomic sequence (AtomicSequence[Parallel[x, y]]) still pauses the
+        whole atomic sequence, and an outer atomic sequence wins over an inner one."""
+        self.active_tasks.add(make_composite_client("c_outer", ATOMIC_SEQUENCE, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("c_inner", ATOMIC_SEQUENCE, goal_id_byte=2))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=3))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self.active_tasks.add(make_task_client("y", "some_task"))
+        self._children(self.atomic_sequence, {1: ["c_inner"], 2: ["p1"]})
+        self._children(self.parallel, {3: ["x", "y"]})
+
+        for requested in ("x", "y", "p1", "c_inner", "c_outer"):
+            with self.subTest(requested=requested):
+                self.assertEqual(
+                    _resolve_target_task_ids(requested, self.active_tasks, self.composites, units=self.units),
+                    ["c_outer"],
+                )
+
+    def test_without_units_behaviour_is_unchanged(self):
+        """Without units, an atomic sequence's child is resolved as before (to itself)."""
+        self.active_tasks.add(make_composite_client("c1", ATOMIC_SEQUENCE, goal_id_byte=1))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.atomic_sequence, {1: ["x"]})
+
+        self.assertEqual(_resolve_target_task_ids("x", self.active_tasks, self.composites), ["x"])
+
+    def test_pause_or_resume_group_pauses_the_atomic_sequence(self):
+        """pause_or_resume_group acts on the atomic sequence, not its child, and still syncs the enclosing Mission."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("c1", ATOMIC_SEQUENCE, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("x", "some_task"))
+        self._children(self.mission, {1: ["c1"]})
+        self._children(self.atomic_sequence, {2: ["x"]})
+        self.mission.is_paused.return_value = False
+
+        def pause(task_id, _paused_by):
+            self.active_tasks.get_task_client(task_id).task_details.status = TaskStatus.PAUSED
+            return True
+
+        callback = Mock(side_effect=pause)
+
+        success = pause_or_resume_group(
+            "x",
+            self.active_tasks,
+            self.composites,
+            (TaskStatus.RECEIVED, TaskStatus.IN_PROGRESS),
+            callback,
+            pause=True,
+            units=self.units,
+        )
+
+        self.assertTrue(success)
+        callback.assert_called_once_with("c1", None)
+        # Redirected via the Mission like any other mission child, so the Mission's own paused flag is armed too
+        self.mission.request_pause.assert_called_once_with(bytes([1] * 16))
+        self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
+
+
+def sequence_goal(*subtasks: SubtaskGoal) -> AtomicSequenceAction.Goal:
+    """AtomicSequence goal with the given subtasks."""
+    return AtomicSequenceAction.Goal(subtasks=list(subtasks))
+
+
+def nested_subtask(task_id: str, task_name: str, goal: AtomicSequenceAction.Goal) -> SubtaskGoal:
+    """SubtaskGoal for a composite task (e.g. a nested AtomicSequence) with the given goal as its task_data."""
+    return SubtaskGoal(task_id=task_id, task_name=task_name, task_data=json.dumps(extract_values(goal)))
+
+
+class FindPausedUnitOfTests(unittest.TestCase):
+    """Unit tests for composite_resolution.find_paused_unit_of."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.composites = {MISSION: Mock(spec=Mission), PARALLEL: Mock(spec=ParallelTaskExecutor)}
+        self.units = {ATOMIC_SEQUENCE: Mock(spec=AtomicSequence)}
+
+    def _add_sequence(self, task_id: str, paused_goal) -> None:
+        client = make_composite_client(task_id, ATOMIC_SEQUENCE, goal_id_byte=1, status=TaskStatus.PAUSED)
+        client.paused_goal = paused_goal
+        self.active_tasks.add(client)
+
+    def _find(self, task_id: str):
+        return find_paused_unit_of(task_id, self.active_tasks, self.composites, self.units)
+
+    def test_finds_subtask_at_any_depth(self):
+        """Direct subtasks, nested composites and their subtasks all map to the outermost paused sequence."""
+        inner = sequence_goal(SubtaskGoal(task_id="nav2", task_name="nav"), SubtaskGoal(task_id="x", task_name="x"))
+        parallel = sequence_goal(SubtaskGoal(task_id="y", task_name="y"))
+        self._add_sequence(
+            "outer",
+            sequence_goal(
+                SubtaskGoal(task_id="nav1", task_name="nav"),
+                nested_subtask("inner", ATOMIC_SEQUENCE, inner),
+                nested_subtask("parallel", PARALLEL, parallel),
+            ),
+        )
+
+        for task_id in ("nav1", "inner", "nav2", "x", "parallel", "y"):
+            with self.subTest(task_id):
+                self.assertEqual(self._find(task_id), "outer")
+        self.assertIsNone(self._find("unknown"))
+
+    def test_ignores_sequences_that_are_not_paused(self):
+        """A running sequence has no paused goal, so its subtasks are not redirected to it."""
+        self._add_sequence("c1", None)
+
+        self.assertIsNone(self._find("nav1"))
+
+    def test_ambiguous_task_id_is_not_redirected(self):
+        """If two paused sequences both list the task_id, neither is picked."""
+        self._add_sequence("c1", sequence_goal(SubtaskGoal(task_id="nav", task_name="nav")))
+        self._add_sequence("c2", sequence_goal(SubtaskGoal(task_id="nav", task_name="nav")))
+
+        self.assertIsNone(self._find("nav"))
+
+    def test_plain_task_data_is_not_searched(self):
+        """Only composite subtasks' task_data is parsed for nested subtasks."""
+        plain_data = json.dumps({"subtasks": [{"task_id": "fake", "task_name": "nav", "task_data": "{}"}]})
+        self._add_sequence("c1", sequence_goal(SubtaskGoal(task_id="t", task_name="plain", task_data=plain_data)))
+
+        self.assertEqual(self._find("t"), "c1")
+        self.assertIsNone(self._find("fake"))
 
 
 if __name__ == "__main__":

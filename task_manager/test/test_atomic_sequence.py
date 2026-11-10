@@ -1,0 +1,231 @@
+#  ------------------------------------------------------------------
+#   Copyright 2024 Karelics Oy
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#  ------------------------------------------------------------------
+
+import unittest
+from unittest import mock
+from unittest.mock import Mock, patch
+
+# Task Manager messages
+from task_manager_msgs.action import AtomicSequence as AtomicSequenceAction
+from task_manager_msgs.action import ExecuteTask
+from task_manager_msgs.msg import SubtaskGoal, TaskStatus
+
+# Task Manager
+from task_manager.task_specs import TaskServerType
+from task_manager.tasks.atomic_sequence import AtomicSequence
+
+GOAL_ID = bytes([0] * 16)
+
+
+def make_goal_handle(subtasks, is_cancel_requested=False):
+    """Mock ServerGoalHandle for an atomic sequence goal with the given subtasks."""
+    return Mock(
+        request=AtomicSequenceAction.Goal(subtasks=subtasks),
+        goal_id=Mock(uuid=[0] * 16),
+        is_cancel_requested=is_cancel_requested,
+    )
+
+
+def subtask(task_id, allow_skipping=False):
+    """SubtaskGoal with the given task_id."""
+    return SubtaskGoal(task_name=f"task_{task_id}", task_data="{}", task_id=task_id, allow_skipping=allow_skipping)
+
+
+def result_with(status):
+    """ExecuteTask.Result with the given status."""
+    return ExecuteTask.Result(task_status=status, task_result="{}")
+
+
+class AtomicSequenceUnittest(unittest.TestCase):
+    """Unittests for AtomicSequence Task."""
+
+    def setUp(self):
+        self.patcher = mock.patch("task_manager.tasks.atomic_sequence.ActionServer", return_value=Mock())
+        self.patcher.start()
+
+        self.atomic_sequence = AtomicSequence(node=Mock(), action_name="", execute_task_cb=Mock())
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    def test_all_subtasks_succeed(self):
+        """Subtasks run in order with source AtomicSequence and the atomic sequence succeeds."""
+        self.atomic_sequence.execute_task_cb.return_value = result_with(TaskStatus.DONE)
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        started = [call.args[0] for call in self.atomic_sequence.execute_task_cb.call_args_list]
+        self.assertEqual([goal.task_id for goal in started], ["a", "b"])
+        self.assertTrue(all(goal.source == "AtomicSequence" for goal in started))
+        self.assertEqual([r.task_status for r in result.results], [TaskStatus.DONE, TaskStatus.DONE])
+        goal_handle.succeed.assert_called_once()
+
+    @patch("task_manager.tasks.mission.uuid.uuid4", return_value="123")
+    def test_generates_missing_task_ids(self, _mock_uuid):
+        """Subtasks without a task_id get a generated one."""
+        self.atomic_sequence.execute_task_cb.return_value = result_with(TaskStatus.DONE)
+        result = self.atomic_sequence.execute_cb(make_goal_handle([subtask("")]))
+        self.assertEqual(result.results[0].task_id, "123")
+
+    def test_failed_subtask_aborts(self):
+        """A failed subtask aborts the atomic sequence and the remaining subtasks are not started."""
+        self.atomic_sequence.execute_task_cb.return_value = result_with(TaskStatus.ERROR)
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        self.assertEqual(self.atomic_sequence.execute_task_cb.call_count, 1)
+        self.assertEqual([r.task_status for r in result.results], [TaskStatus.ERROR, TaskStatus.RECEIVED])
+        goal_handle.abort.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+
+    def test_failed_skippable_subtask_continues(self):
+        """A failed subtask with allow_skipping is marked skipped and the atomic sequence continues."""
+        self.atomic_sequence.execute_task_cb.side_effect = [result_with(TaskStatus.ERROR), result_with(TaskStatus.DONE)]
+        goal_handle = make_goal_handle([subtask("a", allow_skipping=True), subtask("b")])
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        self.assertTrue(result.results[0].skipped)
+        self.assertFalse(result.results[1].skipped)
+        goal_handle.succeed.assert_called_once()
+
+    def test_cancel_before_first_subtask(self):
+        """A cancel (or pause) arriving before the first subtask starts doesn't start anything."""
+        goal_handle = make_goal_handle([subtask("a")], is_cancel_requested=True)
+
+        self.atomic_sequence.execute_cb(goal_handle)
+
+        self.atomic_sequence.execute_task_cb.assert_not_called()
+        goal_handle.canceled.assert_called_once()
+
+    def test_cancel_between_subtasks(self):
+        """A cancel (or pause) arriving between two subtasks doesn't start the next one."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def finish_then_cancel(_goal, handle):
+            handle.is_cancel_requested = True
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = finish_then_cancel
+
+        self.atomic_sequence.execute_cb(goal_handle)
+
+        self.assertEqual(self.atomic_sequence.execute_task_cb.call_count, 1)
+        goal_handle.canceled.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+
+    def test_cancel_after_last_subtask_done_succeeds(self):
+        """A cancel (or pause) arriving after the last subtask already finished successfully is too late: the atomic
+        sequence succeeds instead of ending CANCELED, so that a resume doesn't rerun every subtask."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_during_last(_goal, handle):
+            if self.atomic_sequence.execute_task_cb.call_count == 2:
+                handle.is_cancel_requested = True
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_during_last
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.succeed.assert_called_once()
+        goal_handle.canceled.assert_not_called()
+        goal_handle.abort.assert_not_called()
+        self.assertEqual([r.task_status for r in result.results], [TaskStatus.DONE, TaskStatus.DONE])
+
+    def test_cancel_during_last_subtask_ends_canceled(self):
+        """If the last subtask itself got cancelled (didn't finish DONE), the atomic sequence still ends CANCELED."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_last(_goal, handle):
+            if self.atomic_sequence.execute_task_cb.call_count == 2:
+                handle.is_cancel_requested = True
+                return result_with(TaskStatus.CANCELED)
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_last
+
+        self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.canceled.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+
+    def test_cancel_ends_canceled_even_if_subtask_aborts(self):
+        """If the running subtask reports an error instead of CANCELED when the atomic sequence is cancelled (e.g. its
+        server aborts on cancel), the atomic sequence must still end CANCELED, so that a pause is recognised as a
+        pause."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def abort_on_cancel(_goal, handle):
+            handle.is_cancel_requested = True
+            return result_with(TaskStatus.ERROR)
+
+        self.atomic_sequence.execute_task_cb.side_effect = abort_on_cancel
+
+        self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.canceled.assert_called_once()
+        goal_handle.abort.assert_not_called()
+
+    def test_cancel_aborts_if_subtask_cancel_failed(self):
+        """If the running subtask could not be cancelled (still IN_PROGRESS), the atomic sequence must abort instead of
+        reporting CANCELED, so that a pause isn't reported as successful while the subtask keeps running."""
+        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+
+        def cancel_fails(_goal, handle):
+            handle.is_cancel_requested = True
+            return result_with(TaskStatus.IN_PROGRESS)
+
+        self.atomic_sequence.execute_task_cb.side_effect = cancel_fails
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.abort.assert_called_once()
+        goal_handle.canceled.assert_not_called()
+        self.assertEqual(self.atomic_sequence.execute_task_cb.call_count, 1)
+        self.assertEqual(result.results[0].task_status, TaskStatus.IN_PROGRESS)
+
+    def test_get_active_children_tracks_progress(self):
+        """The currently running subtask is reported as the only active child, cleared once the atomic sequence
+        finishes."""
+        seen = []
+
+        def record_children(_goal, _handle):
+            seen.append(self.atomic_sequence.get_active_children(GOAL_ID))
+            return result_with(TaskStatus.DONE)
+
+        self.atomic_sequence.execute_task_cb.side_effect = record_children
+
+        self.atomic_sequence.execute_cb(make_goal_handle([subtask("a"), subtask("b")]))
+
+        self.assertEqual(seen, [["a"], ["b"]])
+        self.assertEqual(self.atomic_sequence.get_active_children(GOAL_ID), [])
+
+    def test_get_task_specs(self):
+        """AtomicSequence is a non-blocking, reentrant action task, cancelled on stop, with the given cancel timeout."""
+        specs = AtomicSequence.get_task_specs("topic", cancel_timeout=7.0)
+        self.assertEqual(specs.task_name, "system/atomic_sequence")
+        self.assertEqual(specs.task_server_type, TaskServerType.ACTION)
+        self.assertFalse(specs.blocking)
+        self.assertTrue(specs.reentrant)
+        self.assertTrue(specs.cancel_on_stop)
+        self.assertEqual(specs.cancel_timeout, 7.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
