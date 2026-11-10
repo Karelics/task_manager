@@ -36,8 +36,8 @@ from task_manager.active_tasks import ActiveTasks
 from task_manager.own_thread import run_in_own_thread
 from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
-from task_manager.tasks.composite_pause_tracker import CompositePauseTracker
-from task_manager.tasks.composite_resolution import pause_or_resume_group, resolve_down
+from task_manager.tasks.composite_pause_tracker import ActiveChildrenProvider, CompositePauseTracker
+from task_manager.tasks.composite_resolution import find_paused_unit_of, pause_or_resume_group, resolve_down
 
 
 class SystemTask(ABC):  # pylint: disable=too-few-public-methods
@@ -163,18 +163,32 @@ class PauseTasksService(SystemTask):
     all of its currently active children. Either way, the composite's own displayed status (and transitively, any
     composite it's itself running under) is kept in sync with its children.
 
+    An AtomicSequence is the exception: it is paused as a single unit and never descended into. Pausing it, or anything
+    running inside it, pauses the whole (outermost) atomic sequence, which restarts from its first subtask on resume.
+
     Best-effort: a child that fails to pause (e.g. a service-backed one that doesn't finish within its
     cancel_timeout grace period) is reported as a failure, but siblings that did pause successfully are left
     paused rather than rolled back.
     """
 
-    def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
+    def __init__(  # pylint: disable=too-many-arguments, too-many-positional-arguments
+        self,
+        node: Node,
+        topic: str,
+        active_tasks: ActiveTasks,
+        composites: Dict[str, CompositePauseTracker],
+        units: Optional[Dict[str, ActiveChildrenProvider]] = None,
     ) -> None:
+        """
+        :param composites: Composite task types whose pause/resume descends into their active children.
+        :param units: Task types paused/resumed as a single unit (e.g. AtomicSequence) - a pause/resume of anything
+            nested in one is redirected up to the outermost such unit.
+        """
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
         self._composites = composites
+        self._units = units or {}
 
         self._node.create_service(
             PauseTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -202,6 +216,7 @@ class PauseTasksService(SystemTask):
                     self._try_pause,
                     pause=True,
                     paused_by=request.paused_by,
+                    units=self._units,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
@@ -241,15 +256,29 @@ class ResumeTasksService(SystemTask):
     children are currently paused. Resuming one of those children directly converges on the same outcome, the
     same way pausing does - see `PauseTasksService`. Best-effort, same as pausing: a child that fails to resume is
     reported as a failure without affecting siblings that did resume.
+
+    A paused AtomicSequence can also be resumed by the task_id of any of its subtasks, at any depth, even though they
+    are no longer active: the request is redirected to the paused AtomicSequence whose goal lists that task_id.
     """
 
-    def __init__(
-        self, node: Node, topic: str, active_tasks: ActiveTasks, composites: Dict[str, CompositePauseTracker]
+    def __init__(  # pylint: disable=too-many-arguments, too-many-positional-arguments
+        self,
+        node: Node,
+        topic: str,
+        active_tasks: ActiveTasks,
+        composites: Dict[str, CompositePauseTracker],
+        units: Optional[Dict[str, ActiveChildrenProvider]] = None,
     ) -> None:
+        """
+        :param composites: Composite task types whose pause/resume descends into their active children.
+        :param units: Task types paused/resumed as a single unit (e.g. AtomicSequence) - a pause/resume of anything
+            nested in one is redirected up to the outermost such unit.
+        """
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
         self._composites = composites
+        self._units = units or {}
 
         self._node.create_service(
             ResumeTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -263,6 +292,20 @@ class ResumeTasksService(SystemTask):
             self._node.get_logger().error(f"Failed to resume task with ID {task_id}: {e}")
             return False
 
+    def _resolve_paused_unit(self, task_id: str) -> str:
+        """If task_id is not active but is a subtask of a paused unit (e.g. a task cancelled when its AtomicSequence was
+        paused), returns that unit's task_id instead, otherwise task_id itself."""
+        try:
+            self._active_tasks.get_task_client(task_id)
+            return task_id
+        except KeyError:
+            pass
+        unit_id = find_paused_unit_of(task_id, self._active_tasks, self._composites, self._units)
+        if unit_id is None:
+            return task_id
+        self._node.get_logger().info(f"Resuming task {task_id} by resuming the paused task {unit_id} it belongs to.")
+        return unit_id
+
     def service_cb(self, request: ResumeTasks.Request, response: ResumeTasks.Response) -> ResumeTasks.Response:
         """Resumes the currently paused tasks by given task_id."""
         resumed = []
@@ -270,12 +313,13 @@ class ResumeTasksService(SystemTask):
         for task_id in request.resumed_tasks:
             try:
                 success = pause_or_resume_group(
-                    task_id,
+                    self._resolve_paused_unit(task_id),
                     self._active_tasks,
                     self._composites,
                     (TaskStatus.PAUSED,),
                     self._try_resume,
                     pause=False,
+                    units=self._units,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to resume a task with ID {task_id}, but the task is not active.")

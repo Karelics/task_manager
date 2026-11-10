@@ -12,6 +12,11 @@ Two ROS packages in this repo:
 - `task_manager/` — the Python implementation.
 - `task_manager_msgs/` — message/service/action interface definitions (`msg/`, `srv/`, `action/`).
 
+## Git
+
+Never commit (including `--amend`) or push unless explicitly asked to in the current request. Leave changes
+uncommitted in the working tree and report what changed instead.
+
 ## Build & test
 
 This is a ROS 2 workspace package, not a standalone Python project — it expects to live under `<ros2_ws>/src/`.

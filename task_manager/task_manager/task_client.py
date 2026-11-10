@@ -66,6 +66,14 @@ class TaskClient(ABC):
         yet.
         """
 
+    @property
+    def paused_goal(self) -> Optional[Any]:
+        """The goal message resume_task() will re-send, while the task is paused, otherwise None.
+
+        Always None for task types that can't be paused.
+        """
+        return None
+
     @abstractmethod
     def register_done_callback(self, callback: Callable[[TaskSpecs, TaskDetails], None]) -> None:
         """Registers callback which will be called when the task finishes."""
@@ -154,6 +162,11 @@ class ActionTaskClient(TaskClient):
     @property
     def goal_done(self) -> bool:
         return self._goal_done.is_set()
+
+    @property
+    def paused_goal(self) -> Optional[Any]:
+        """The goal message resume_task() will re-send, while the task is paused, otherwise None."""
+        return self._pause_state.last_goal_message if self._pause_state.paused else None
 
     @property
     def goal_id(self) -> Optional[Any]:
@@ -345,7 +358,11 @@ class ActionTaskClient(TaskClient):
         result the server returns when the goal is cancelled is kept, and any fields listed in
         `task_specs.result_concat_fields` are concatenated into the task's final result once it truly finishes.
 
-        :raises PauseTaskFailedError: If the task is already paused/finished, or the cancel fails/times out.
+        If the goal completes successfully on its own before the cancel takes effect, the pause is considered
+        successful even though the task ended up DONE rather than PAUSED, the same as for service-backed tasks.
+
+        :raises PauseTaskFailedError: If the task is already paused/finished, finishes unsuccessfully on its own while
+            being paused, or the cancel fails/times out.
         """
         if self._pause_state.paused:
             raise PauseTaskFailedError("Task is already paused.")
@@ -362,19 +379,27 @@ class ActionTaskClient(TaskClient):
             self._pause_state.pausing = False
             raise PauseTaskFailedError(f"Failed to pause the task: {e}") from e
 
-        # Wait for _goal_done_cb to set the pause_done event, which indicates that the cancel has been done.
-        if not self._pause_state.pause_done.wait(timeout=self._task_specs.cancel_timeout):
-            self._pause_state.pausing = False
-            if self.goal_done:
-                # The goal finished on its own (succeeded/aborted) before our cancel could take effect -
-                # _goal_done_cb() has already fired the real done-callbacks with the real result. Nothing to undo,
-                # but this pause attempt itself did not succeed.
-                raise PauseTaskFailedError("Task finished on its own before it could be paused.")
+        # Set either by the pause-cancel completing, or by the goal finishing on its own first.
+        pause_done = self._pause_state.pause_done.wait(timeout=self._task_specs.cancel_timeout)
+        self._pause_state.pausing = False
+
+        if self.goal_done:
+            # The goal finished on its own before our cancel could take effect - _goal_done_cb() has already
+            # fired the real done-callbacks with the real result, so there's nothing to undo.
+            if self.task_details.status == TaskStatus.DONE:
+                # Same as for service-backed tasks: a task that completed successfully during the pause counts
+                # as a successful pause, even though it ended up DONE rather than PAUSED. A Mission waiting on it
+                # stays paused before its next step.
+                self._node.get_logger().info(
+                    f"Task {self.task_specs.task_name} finished successfully before it could be paused."
+                )
+                return
+            raise PauseTaskFailedError("Task finished on its own before it could be paused.")
+        if not pause_done:
             raise PauseTaskFailedError(
                 f"Task didn't pause within {self._task_specs.cancel_timeout} second timeout after it was cancelled."
             )
 
-        self._pause_state.pausing = False
         self._pause_state.paused = True
         self.task_details.status = TaskStatus.PAUSED
         self.task_details.paused_by = paused_by if paused_by else ""
@@ -427,6 +452,11 @@ class ActionTaskClient(TaskClient):
             self._fill_in_task_details(future)
 
         self._notify_done_callbacks()
+        if self._pause_state.pausing:
+            # A pause_task() call is waiting for its cancel to take effect, but the goal finished on its own first.
+            # Wake it up right away instead of letting it wait out the whole cancel_timeout. goal_done is already
+            # set, so it can tell this apart from a completed pause.
+            self._pause_state.pause_done.set()
 
     @staticmethod
     def _canceled_result(future: Future) -> bool:
