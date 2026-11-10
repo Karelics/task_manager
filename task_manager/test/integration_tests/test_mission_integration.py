@@ -29,6 +29,7 @@ from task_manager_msgs.action import ExecuteTask, Mission, PerformInParallel
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 
+# pylint: disable=protected-access
 class MissionTests(TaskManagerTestNode):
     """Integration tests for verifying the functionality of the Mission."""
 
