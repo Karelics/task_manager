@@ -14,6 +14,7 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 import json
+import time
 import unittest
 
 # Thirdparty
@@ -28,8 +29,13 @@ from task_manager_msgs.action import ExecuteTask, Mission, PerformInParallel
 from task_manager_msgs.msg import SubtaskGoal, TaskStatus
 
 
+# pylint: disable=protected-access
 class MissionTests(TaskManagerTestNode):
     """Integration tests for verifying the functionality of the Mission."""
+
+    # Slightly above the default cancel timeout (2s), so that the mission cancel times out right before the parallel
+    # executor gives up waiting for its subtasks, as in the robot case.
+    PARALLEL_EXECUTOR_CANCEL_TIMEOUT = 2.2
 
     def test_start_mission_task_success(self):
         """Integration test for successful flow of the mission task."""
@@ -457,6 +463,63 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_response.status, GoalStatus.STATUS_ABORTED)
         self.assertEqual(mission_response.result.task_status, TaskStatus.CANCELED)
         self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.CANCELED)
+
+    def test_stop_mission_with_parallel_task_having_slowly_canceling_subtask(self):
+        """System/stop on a mission -> parallel task -> (fast canceling task, slowly canceling task).
+
+        Reproduces a robot case with timeouts scaled down by 2.5x (robot: 5s default cancel timeout, 5s parallel
+        executor timeout, 6s parallel task cancel timeout, record_video taking over 5s to cancel). Here the slow task
+        takes 3s to cancel, which is longer than both the mission cancel timeout (2s) and the parallel executor timeout
+        (2.2s). Everything that is canceled should end up as CANCELED and the stop should succeed.
+        """
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_name="system/perform_in_parallel",
+                    task_id="parallel",
+                    task_data=json.dumps(
+                        extract_values(
+                            PerformInParallel.Goal(
+                                subtasks=[
+                                    SubtaskGoal(task_id="fast", task_name="fibonacci", task_data='{"order": 30}'),
+                                    # Order over 50 -> action server takes 3 seconds to cancel
+                                    SubtaskGoal(
+                                        task_id="slow", task_name="fibonacci_cancel_on_stop", task_data='{"order": 60}'
+                                    ),
+                                ]
+                            )
+                        )
+                    ),
+                ),
+            ]
+        )
+        goal = ExecuteTask.Goal(
+            task_name="system/mission", task_id="mission", task_data=json.dumps(extract_values(mission_goal))
+        )
+        # The slow task is allowed to continue after the parallel cancel, like the robot's recording task
+        self.task_manager_node.known_tasks["fibonacci_cancel_on_stop"].require_finish_on_parallel_cancel = False
+        # Scaled down robot values: mission 5s (TaskSpecs default), parallel task 6s
+        self.task_manager_node.known_tasks["system/mission"].cancel_timeout = 2.0
+        self.task_manager_node.known_tasks["system/perform_in_parallel"].cancel_timeout = 2.4
+        mission_goal_handle = self._start_task(goal)
+        self.wait_for_task_start("fast")
+        self.wait_for_task_start("slow")
+
+        stop_response = self.execute_stop_task()
+        mission_result = self._get_response(mission_goal_handle.get_result_async(), timeout=10).result
+
+        self.assertEqual(stop_response.result.task_status, TaskStatus.DONE, stop_response.result.task_result)
+        self.assertEqual(stop_response.result.task_result, json.dumps({"success": True}))
+        self.assertEqual(mission_result.task_status, TaskStatus.CANCELED)
+        self.assertEqual(self.task_manager_node.active_tasks.get_active_tasks(), [])
+
+        # The slow action server is still canceling the goal in the background. Wait for it to finish, so that it
+        # doesn't try to publish its status after the nodes have been destroyed in tearDown.
+        slow_server = self.test_tasks_node.fib_cancel_on_stop_server
+        start = time.time()
+        while any(goal_handle.is_active for goal_handle in list(slow_server._goal_handles.values())):
+            self.assertLess(time.time() - start, 5.0, "Slow action server did not finish canceling")
+            time.sleep(0.05)
 
 
 if __name__ == "__main__":
