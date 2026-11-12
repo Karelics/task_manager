@@ -63,12 +63,15 @@ class TaskManagerTestNode(unittest.TestCase):
     # causing ROS messages to hang during the tests due to insufficient amount of maximum threads.
     EXECUTOR_NUM_THREADS = 10
 
+    # Cancel timeout of the parallel executor while it waits for its subtasks to finish after a cancel
+    PARALLEL_EXECUTOR_CANCEL_TIMEOUT = 1.5
+
     def setUp(self) -> None:
         rclpy.init()
         # Before starting task nodes, override the default ROS topic to not interfere with the normal ones
         TaskRegistrator.TASK_TOPIC_PREFIX = TASK_TOPIC_PREFIX
 
-        params = TaskManagerNodeParams()
+        params = TaskManagerNodeParams(parallel_executor_cancel_timeout=self.PARALLEL_EXECUTOR_CANCEL_TIMEOUT)
         params.add_fibonacci_task(task_name="fibonacci")
         params.add_fibonacci_task(task_name="fibonacci_2")
         params.add_fibonacci_task(task_name="fibonacci_blocking", blocking=True)
@@ -262,7 +265,8 @@ class TestTasksNode(Node):
 class TaskManagerNodeParams:
     """Utility class to easier declare Task Manager parameters."""
 
-    def __init__(self):
+    def __init__(self, parallel_executor_cancel_timeout: float = 1.5):
+        self._parallel_executor_cancel_timeout = parallel_executor_cancel_timeout
         self._params = []
         self._tasks = []
 
@@ -311,7 +315,9 @@ class TaskManagerNodeParams:
         """Returns the Task Manager parameters."""
         self._params.append(Parameter(name="tasks", value=self._tasks))
         self._params.append(Parameter(name="enable_task_servers", value=True))
-        self._params.append(Parameter(name="parallel_executor_task.cancel_timeout", value=1.5))
+        self._params.append(
+            Parameter(name="parallel_executor_task.cancel_timeout", value=self._parallel_executor_cancel_timeout)
+        )
         self._params.append(Parameter(name="default_cancel_timeout", value=2.0))
         return self._params
 
