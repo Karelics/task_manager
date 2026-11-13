@@ -32,6 +32,7 @@ from task_manager.task_details import TaskDetails
 from task_manager.task_specs import TaskSpecs
 from task_manager.tasks.atomic_sequence import AtomicSequence
 from task_manager.tasks.composite_resolution import (
+    PausedGroups,
     _find_enclosing_composite,
     _resolve_start_id,
     _resolve_target_task_ids,
@@ -365,6 +366,22 @@ class ResolveStartIdTests(unittest.TestCase):
 
         self.assertEqual(_resolve_start_id("leaf1", self.active_tasks, self.composites), "m1")
 
+    def test_resolve_start_id_walks_up_to_the_outermost_composite(self):
+        """A member of a parallel task running inside a Mission resolves to the Mission, not just the parallel task, so
+        that the Mission's own paused flag gets armed too."""
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["p1"]}.get(goal_id, [])
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([2] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
+
+        for requested in ("leaf1", "leaf2", "p1", "m1"):
+            with self.subTest(requested=requested):
+                self.assertEqual(_resolve_start_id(requested, self.active_tasks, self.composites), "m1")
+
     def test_resolve_start_id_returns_task_id_itself_when_untracked(self):
         """Tests that _resolve_start_id returns the task_id itself when it is not a tracked child of any composite."""
         self.active_tasks.add(make_task_client("other", "some_task"))
@@ -654,3 +671,68 @@ class FindPausedUnitOfTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PausedGroupsTests(unittest.TestCase):
+    """Unit tests for composite_resolution.PausedGroups."""
+
+    def test_remembers_every_member_under_its_root(self):
+        groups = PausedGroups()
+        groups.remember(["leaf1", "leaf1", "leaf2", "m1"], "m1")
+        self.assertEqual(groups.lookup("leaf1"), "m1")
+        self.assertEqual(groups.lookup("leaf2"), "m1")
+        self.assertIsNone(groups.lookup("m1"))  # The root itself needs no redirect
+        self.assertIsNone(groups.lookup("unknown"))
+        self.assertEqual(groups.roots(), ["m1"])
+
+    def test_forget_drops_only_the_given_groups(self):
+        groups = PausedGroups()
+        groups.remember(["a"], "m1")
+        groups.remember(["b"], "m2")
+        groups.forget(["m1"])
+        self.assertIsNone(groups.lookup("a"))
+        self.assertEqual(groups.lookup("b"), "m2")
+
+
+class PauseOrResumeGroupPausedGroupsTests(unittest.TestCase):
+    """pause_or_resume_group records a pause in PausedGroups and forgets it on resume."""
+
+    def setUp(self) -> None:
+        self.active_tasks = ActiveTasks()
+        self.mission = Mock(spec=Mission)
+        self.parallel = Mock(spec=ParallelTaskExecutor)
+        self.mission.is_paused.return_value = False
+        self.parallel.is_paused.return_value = False
+        self.composites = {MISSION: self.mission, PARALLEL: self.parallel}
+        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
+        self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=2))
+        self.active_tasks.add(make_task_client("leaf1", "some_task"))
+        self.active_tasks.add(make_task_client("leaf2", "some_task"))
+        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["p1"]}.get(goal_id, [])
+        self.parallel.get_active_children.side_effect = lambda goal_id: {bytes([2] * 16): ["leaf1", "leaf2"]}.get(
+            goal_id, []
+        )
+        self.groups = PausedGroups()
+
+    def _run(self, task_id: str, pause: bool) -> None:
+        pause_or_resume_group(
+            task_id,
+            self.active_tasks,
+            self.composites,
+            (TaskStatus.IN_PROGRESS, TaskStatus.PAUSED),
+            lambda _task_id, _paused_by: True,
+            pause=pause,
+            paused_groups=self.groups,
+        )
+
+    def test_pause_by_leaf_remembers_the_leaf_and_its_siblings_under_the_mission(self):
+        self._run("leaf1", pause=True)
+        for task_id in ("leaf1", "leaf2"):
+            with self.subTest(task_id=task_id):
+                self.assertEqual(self.groups.lookup(task_id), "m1")
+
+    def test_resume_forgets_the_group(self):
+        self._run("leaf1", pause=True)
+        self._run("m1", pause=False)
+        self.assertIsNone(self.groups.lookup("leaf1"))
+        self.assertIsNone(self.groups.lookup("leaf2"))

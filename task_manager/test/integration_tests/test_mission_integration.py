@@ -17,6 +17,9 @@ import json
 import time
 import unittest
 
+# ROS
+from rclpy.action.client import ClientGoalHandle
+
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values, populate_instance
 from task_manager_test_utils import TaskManagerTestNode
@@ -363,6 +366,93 @@ class MissionTests(TaskManagerTestNode):
 
         # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
         self.execute_cancel_task([mission_id])
+
+    def _start_mission_with_parallel_finishing_during_pause(self) -> ClientGoalHandle:
+        """Starts Mission[Parallel[fibonacci, slow service], fibonacci] and waits until the parallel members run.
+
+        The service member can't be paused, so it finishes DONE during the pause, which tears down the whole parallel
+        task.
+        """
+        parallel_goal = PerformInParallel.Goal(
+            subtasks=[
+                SubtaskGoal(task_id="fib", task_name="fibonacci", task_data='{"order": 10}'),
+                SubtaskGoal(task_id="add", task_name="add_two_ints_non_blocking", task_data='{"a": 0, "b": 1}'),
+            ]
+        )
+        mission_goal = Mission.Goal(
+            subtasks=[
+                SubtaskGoal(
+                    task_id="parallel",
+                    task_name="system/perform_in_parallel",
+                    task_data=json.dumps(extract_values(parallel_goal)),
+                ),
+                SubtaskGoal(task_id="second", task_name="fibonacci_2", task_data='{"order": 1}'),
+            ]
+        )
+        goal = ExecuteTask.Goal(
+            task_id="mission", task_name="system/mission", task_data=json.dumps(extract_values(mission_goal))
+        )
+        mission_goal_handle = self._get_response(self.execute_task_client.send_goal_async(goal), timeout=5)
+        self.wait_for_task_start("fib")
+        self.wait_for_task_start("add")
+        return mission_goal_handle
+
+    def _check_mission_stays_paused_after_parallel_finishes_during_pause(self, paused_id: str, resumed_id: str) -> None:
+        """Pausing the mission through any of its ids must keep it paused before its next subtask, even if the parallel
+        subtask finishes during the pause.
+
+        Resuming by any id the mission was paused through must resume it, even one that has finished meanwhile.
+        """
+        mission_goal_handle = self._start_mission_with_parallel_finishing_during_pause()
+        mission_client = self.task_manager_node.active_tasks.get_task_client("mission")
+
+        pause_response = self.execute_pause_task([paused_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
+
+        self.wait_for_task_status("add", TaskStatus.DONE)
+        self.wait_for_task_status("fib", TaskStatus.CANCELED)
+        self.wait_for_task_status("parallel", TaskStatus.DONE)
+
+        # The mission must not move on to its next subtask while paused
+        time.sleep(1.0)
+        self.assertNotIn("second", self._tasks_started)
+        self.assertEqual(mission_client.task_details.status, TaskStatus.PAUSED)
+
+        resume_response = self.execute_resume_task([resumed_id])
+        self.assertEqual(resume_response.result.task_status, TaskStatus.DONE)
+        self.assertEqual(
+            resume_response.result.task_result, json.dumps({"success": True, "successful_resumes": [resumed_id]})
+        )
+        self.wait_for_task_start("second")
+
+        mission_response = mission_goal_handle.get_result()
+        self.assertEqual(mission_response.status, GoalStatus.STATUS_SUCCEEDED)
+
+    def test_mission_stays_paused_after_parallel_finishes_during_pause_by_mission_id(self):
+        """Pausing by the mission's own task_id."""
+        self._check_mission_stays_paused_after_parallel_finishes_during_pause("mission", resumed_id="mission")
+
+    def test_mission_stays_paused_after_parallel_finishes_during_pause_by_parallel_id(self):
+        """Pausing and resuming by the parallel subtask's task_id, which has finished by the time of the resume."""
+        self._check_mission_stays_paused_after_parallel_finishes_during_pause("parallel", resumed_id="parallel")
+
+    def test_mission_stays_paused_after_parallel_finishes_during_pause_by_leaf_id(self):
+        """Pausing by the task_id of a leaf inside the parallel subtask must pause the whole mission, not only the
+        parallel task.
+
+        Resuming by the same task_id resumes the mission, even though the leaf was cancelled meanwhile.
+        """
+        self._check_mission_stays_paused_after_parallel_finishes_during_pause("fib", resumed_id="fib")
+
+    def test_mission_paused_by_the_leaf_that_finishes_during_pause(self):
+        """Pausing by the leaf that can't be paused and finishes during the pause (e.g. a video recording that stops
+        successfully when cancelled) must still pause the whole mission, and resuming by it resumes the mission."""
+        self._check_mission_stays_paused_after_parallel_finishes_during_pause("add", resumed_id="add")
+
+    def test_mission_paused_by_one_leaf_resumes_by_a_sibling_leaf_that_finished_during_pause(self):
+        """A sibling paused together with the named leaf can be used for the resume too, even though it finished during
+        the pause."""
+        self._check_mission_stays_paused_after_parallel_finishes_during_pause("fib", resumed_id="add")
 
     def test_mission_nested_inside_parallel_task_inside_mission_is_not_cancelled(self):
         """A system/mission subtask started by a ParallelTaskExecutor (itself a subtask of an outer Mission) must not be

@@ -37,7 +37,12 @@ from task_manager.own_thread import run_in_own_thread
 from task_manager.task_client import CancelTaskFailedError, PauseTaskFailedError, ResumeTaskFailedError
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.composite_pause_tracker import ActiveChildrenProvider, CompositePauseTracker
-from task_manager.tasks.composite_resolution import find_paused_unit_of, pause_or_resume_group, resolve_down
+from task_manager.tasks.composite_resolution import (
+    PausedGroups,
+    find_paused_unit_of,
+    pause_or_resume_group,
+    resolve_down,
+)
 
 
 class SystemTask(ABC):  # pylint: disable=too-few-public-methods
@@ -178,17 +183,21 @@ class PauseTasksService(SystemTask):
         active_tasks: ActiveTasks,
         composites: Dict[str, CompositePauseTracker],
         units: Optional[Dict[str, ActiveChildrenProvider]] = None,
+        paused_groups: Optional[PausedGroups] = None,
     ) -> None:
         """
         :param composites: Composite task types whose pause/resume descends into their active children.
         :param units: Task types paused/resumed as a single unit (e.g. AtomicSequence) - a pause/resume of anything
             nested in one is redirected up to the outermost such unit.
+        :param paused_groups: Shared between the pause and resume services, so that a paused group can be resumed by
+            any task_id it was paused through, even one that is no longer active.
         """
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
         self._composites = composites
         self._units = units or {}
+        self._paused_groups = paused_groups if paused_groups is not None else PausedGroups()
 
         self._node.create_service(
             PauseTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -206,6 +215,7 @@ class PauseTasksService(SystemTask):
         """Pauses the currently active tasks by given task_id."""
         paused = []
         response.success = True
+        self._forget_finished_groups()
         for task_id in request.paused_tasks:
             try:
                 success = pause_or_resume_group(
@@ -217,6 +227,7 @@ class PauseTasksService(SystemTask):
                     pause=True,
                     paused_by=request.paused_by,
                     units=self._units,
+                    paused_groups=self._paused_groups,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to pause a task with ID {task_id}, but the task is not active.")
@@ -233,6 +244,16 @@ class PauseTasksService(SystemTask):
         self._active_tasks.publish_active_tasks()
         response.successful_pauses = paused
         return response
+
+    def _forget_finished_groups(self) -> None:
+        """Drops the records of paused groups whose root task has finished meanwhile, e.g. was cancelled."""
+        finished = []
+        for root_id in self._paused_groups.roots():
+            try:
+                self._active_tasks.get_task_client(root_id)
+            except KeyError:
+                finished.append(root_id)
+        self._paused_groups.forget(finished)
 
     @staticmethod
     def get_task_specs(topic: str) -> TaskSpecs:
@@ -268,17 +289,21 @@ class ResumeTasksService(SystemTask):
         active_tasks: ActiveTasks,
         composites: Dict[str, CompositePauseTracker],
         units: Optional[Dict[str, ActiveChildrenProvider]] = None,
+        paused_groups: Optional[PausedGroups] = None,
     ) -> None:
         """
         :param composites: Composite task types whose pause/resume descends into their active children.
         :param units: Task types paused/resumed as a single unit (e.g. AtomicSequence) - a pause/resume of anything
             nested in one is redirected up to the outermost such unit.
+        :param paused_groups: Shared between the pause and resume services, so that a paused group can be resumed by
+            any task_id it was paused through, even one that is no longer active.
         """
         self._node = node
         self._topic = topic
         self._active_tasks = active_tasks
         self._composites = composites
         self._units = units or {}
+        self._paused_groups = paused_groups if paused_groups is not None else PausedGroups()
 
         self._node.create_service(
             ResumeTasks, self._topic, self.service_cb, callback_group=MutuallyExclusiveCallbackGroup()
@@ -293,18 +318,25 @@ class ResumeTasksService(SystemTask):
             return False
 
     def _resolve_paused_unit(self, task_id: str) -> str:
-        """If task_id is not active but is a subtask of a paused unit (e.g. a task cancelled when its AtomicSequence was
-        paused), returns that unit's task_id instead, otherwise task_id itself."""
+        """If task_id is not active anymore but belongs to a paused group, returns the task_id to resume instead,
+        otherwise task_id itself.
+
+        The group is either a paused unit listing task_id as a subtask (e.g. a task cancelled when its AtomicSequence
+        was paused), or the group task_id was paused through (e.g. a member of a parallel task inside a Mission, which
+        finished while the Mission was paused).
+        """
         try:
             self._active_tasks.get_task_client(task_id)
             return task_id
         except KeyError:
             pass
-        unit_id = find_paused_unit_of(task_id, self._active_tasks, self._composites, self._units)
-        if unit_id is None:
+        group_id = find_paused_unit_of(task_id, self._active_tasks, self._composites, self._units)
+        if group_id is None:
+            group_id = self._paused_groups.lookup(task_id)
+        if group_id is None:
             return task_id
-        self._node.get_logger().info(f"Resuming task {task_id} by resuming the paused task {unit_id} it belongs to.")
-        return unit_id
+        self._node.get_logger().info(f"Resuming task {task_id} by resuming the paused task {group_id} it belongs to.")
+        return group_id
 
     def service_cb(self, request: ResumeTasks.Request, response: ResumeTasks.Response) -> ResumeTasks.Response:
         """Resumes the currently paused tasks by given task_id."""
@@ -320,6 +352,7 @@ class ResumeTasksService(SystemTask):
                     self._try_resume,
                     pause=False,
                     units=self._units,
+                    paused_groups=self._paused_groups,
                 )
             except KeyError:
                 self._node.get_logger().error(f"Tried to resume a task with ID {task_id}, but the task is not active.")

@@ -23,7 +23,8 @@ their (possibly deeply nested) children up to the outermost such unit.
 """
 
 import json
-from typing import Callable, Collection, Dict, Iterator, List, Optional, Tuple
+import threading
+from typing import Callable, Collection, Dict, Iterable, Iterator, List, Optional, Tuple
 
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values
@@ -35,6 +36,45 @@ from task_manager_msgs.msg import TaskStatus
 from task_manager.active_tasks import ActiveTasks
 from task_manager.task_client import TaskClient
 from task_manager.tasks.composite_pause_tracker import ActiveChildrenProvider, CompositePauseTracker
+
+
+class PausedGroups:
+    """Remembers, for each paused group, which task_ids were paused through it, so that a resume can name any of them.
+
+    A pause by e.g. a member of a parallel task running inside a Mission pauses the whole Mission. That member may
+    finish while paused (e.g. its parallel task is torn down because a sibling finished during the pause), after which
+    it is no longer active and can't be resolved on its own anymore - but resuming it by the same task_id it was paused
+    with must still resume the Mission.
+
+    Thread-safe, since the pause and resume services may run concurrently.
+    """
+
+    def __init__(self) -> None:
+        self._root_of: Dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def remember(self, task_ids: Iterable[str], root_id: str) -> None:
+        """Records that every task_id in task_ids was paused as part of the group rooted at root_id."""
+        with self._lock:
+            for task_id in task_ids:
+                if task_id != root_id:
+                    self._root_of[task_id] = root_id
+
+    def lookup(self, task_id: str) -> Optional[str]:
+        """Returns the root task_id of the paused group task_id was paused in, or None if it isn't known."""
+        with self._lock:
+            return self._root_of.get(task_id)
+
+    def forget(self, root_ids: Iterable[str]) -> None:
+        """Drops every record of the groups rooted at root_ids, e.g. once they are resumed or have finished."""
+        root_ids = set(root_ids)
+        with self._lock:
+            self._root_of = {task_id: root for task_id, root in self._root_of.items() if root not in root_ids}
+
+    def roots(self) -> List[str]:
+        """Returns the root task_ids of every remembered group."""
+        with self._lock:
+            return list(set(self._root_of.values()))
 
 
 def _composite_active_children(
@@ -188,11 +228,15 @@ def _resolve_start_id(
     composites: Dict[str, "CompositePauseTracker"],
     units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
 ) -> str:
-    """The task_id resolve_down should actually expand from: task_id's enclosing composite if it's currently a tracked
-    active child of one, otherwise task_id itself.
+    """The task_id resolve_down should actually expand from: the outermost composite task_id is currently (transitively)
+    a tracked active child of, otherwise task_id itself.
+
+    Walking all the way up, rather than one hop, arms the paused flag of every enclosing composite - e.g. pausing a
+    member of a parallel task running inside a Mission must also arm the Mission's own flag. Otherwise, if the parallel
+    task finishes during the pause, the Mission would carry on with its next subtask.
 
     If task_id is (nested in) a unit, the outermost such unit takes task_id's place first, so the unit is paused as a
-    whole and its enclosing composite (if any) is still redirected to exactly as for any other child - keeping e.g. a
+    whole and its enclosing composites (if any) are still redirected to exactly as for any other child - keeping e.g. a
     Mission's paused flag consistent no matter whether the Mission, the atomic sequence or the atomic sequence's child
     is named.
     """
@@ -200,8 +244,13 @@ def _resolve_start_id(
         outermost_unit = _find_outermost_unit(task_id, active_tasks, composites, units)
         if outermost_unit is not None:
             task_id = outermost_unit
+    visited = {task_id}
     enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
-    return enclosing if enclosing is not None else task_id
+    while enclosing is not None and enclosing not in visited:
+        visited.add(enclosing)
+        task_id = enclosing
+        enclosing = _find_enclosing_composite(task_id, active_tasks, composites)
+    return task_id
 
 
 def _resolve_target_task_ids(
@@ -277,6 +326,7 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
     pause: bool,
     paused_by: Optional[str] = None,
     units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
+    paused_groups: Optional[PausedGroups] = None,
 ) -> bool:
     """Run function 'callback' on every task which is linked to the task with given 'task_id'.
 
@@ -296,10 +346,18 @@ def pause_or_resume_group(  # pylint: disable=too-many-arguments, too-many-posit
         False to disarm them - see resolve_down's `paused_flag` parameter.
     :param paused_by: the identifier of the entity requesting the pause or reason for pausing, if applicable.
     :param units: pause-as-a-unit task types (e.g. AtomicSequence), paused/resumed as a whole - see _resolve_start_id.
+    :param paused_groups: if given, a pause records task_id and every task it resolved to under the group's root, so
+        that a later resume can name any of them even once they are no longer active. A resume forgets the group.
     :raises KeyError: if task_id (or its resolved starting point) is not an active task.
     :return: True if everything succeeded.
     """
-    target_ids = _resolve_target_task_ids(task_id, active_tasks, composites, paused_flag=pause, units=units)
+    start_id = _resolve_start_id(task_id, active_tasks, composites, units)
+    target_ids = resolve_down(start_id, active_tasks, composites, pause)
+    if paused_groups is not None:
+        if pause:
+            paused_groups.remember([task_id, *target_ids], start_id)
+        else:
+            paused_groups.forget([start_id])
 
     success = True
     for member_id in target_ids:

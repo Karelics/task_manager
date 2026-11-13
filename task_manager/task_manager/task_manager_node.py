@@ -49,6 +49,7 @@ from task_manager.task_details import TaskDetails
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator
 from task_manager.task_specs import TaskServerType, TaskSpecs
 from task_manager.tasks.atomic_sequence import AtomicSequence
+from task_manager.tasks.composite_resolution import PausedGroups
 from task_manager.tasks.mission import Mission
 from task_manager.tasks.parallel_task_executor import ParallelTaskExecutor
 from task_manager.tasks.system_tasks import (
@@ -210,11 +211,22 @@ class TaskManager(Node):
         cancel_service = CancelTasksService(
             self, topic=cancel_topic, active_tasks=self.active_tasks, composites=composites
         )
+        paused_groups = PausedGroups()
         pause_service = PauseTasksService(
-            self, topic=pause_topic, active_tasks=self.active_tasks, composites=composites, units=units
+            self,
+            topic=pause_topic,
+            active_tasks=self.active_tasks,
+            composites=composites,
+            units=units,
+            paused_groups=paused_groups,
         )
         resume_service = ResumeTasksService(
-            self, topic=resume_topic, active_tasks=self.active_tasks, composites=composites, units=units
+            self,
+            topic=resume_topic,
+            active_tasks=self.active_tasks,
+            composites=composites,
+            units=units,
+            paused_groups=paused_groups,
         )
 
         self.known_tasks["system/stop"] = stop_service.get_task_specs(stop_topic)
