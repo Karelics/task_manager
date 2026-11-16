@@ -228,17 +228,17 @@ def _resolve_start_id(
     composites: Dict[str, "CompositePauseTracker"],
     units: Optional[Dict[str, "ActiveChildrenProvider"]] = None,
 ) -> str:
-    """The task_id resolve_down should actually expand from: the outermost composite task_id is currently (transitively)
-    a tracked active child of, otherwise task_id itself.
+    """Returns the task_id at the top of the task tree that task_id belongs to, i.e. where a pause/resume of task_id
+    should start resolving down from.
 
-    Walking all the way up, rather than one hop, arms the paused flag of every enclosing composite - e.g. pausing a
-    member of a parallel task running inside a Mission must also arm the Mission's own flag. Otherwise, if the parallel
-    task finishes during the pause, the Mission would carry on with its next subtask.
+    For example, in Mission[Parallel[nav, video]], pausing nav, video, the parallel task or the Mission all start from
+    the Mission. Starting from the top makes resolve_down arm the paused flag of every composite on the way down, so
+    the Mission stays paused even if the parallel task finishes during the pause. A task_id that isn't inside any
+    composite is returned as is.
 
-    If task_id is (nested in) a unit, the outermost such unit takes task_id's place first, so the unit is paused as a
-    whole and its enclosing composites (if any) are still redirected to exactly as for any other child - keeping e.g. a
-    Mission's paused flag consistent no matter whether the Mission, the atomic sequence or the atomic sequence's child
-    is named.
+    Units (e.g. AtomicSequence) are never descended into. If task_id is inside a unit, the outermost unit is used in its
+    place before going up, e.g. in Mission[AtomicSequence[nav]] pausing nav starts from the Mission, which then
+    resolves down to the AtomicSequence, not to nav.
     """
     if units:
         outermost_unit = _find_outermost_unit(task_id, active_tasks, composites, units)
