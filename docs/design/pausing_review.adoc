@@ -1,0 +1,651 @@
+= Task pausing: bug map, fix plan and simplification options
+:toc: left
+:toclevels: 2
+:sectnums:
+:source-highlighter: rouge
+
+[abstract]
+Pausing has grown into the most complex part of Task Manager and keeps producing bugs. This document (1) maps the
+bugs found by reading the current code, (2) proposes an ordered plan to fix them, and (3) offers several levels of
+refactoring that would make pausing simpler and less bug-prone. It ends with the decisions the team needs to make.
+It is written for review and is expected to be edited.
+
+== How to read this document
+
+*Status of the evidence.* The analysis is a reading of the code and git history of branch `nested-pausing-bug`
+(HEAD `a4de58c`), which is `feat/pausing` (`2a5d28f`) plus two open commits (`4d2cc35`, `a4de58c`: `PausedGroups` and
+up-resolution). Anything about `PausedGroups`, `_resolve_start_id` or up-resolution therefore describes that branch and
+is not yet in `feat/pausing`. The analysis was done without `rclpy`. It was then partly checked in the `task_manager`
+container against `feat/pausing`:
+
+* The existing suite passes (224 tests, 42 subtests).
+* *B1 is reproduced at client level* with a mock server that finishes on cancel. After `ActionTaskClient.pause_task()`
+  the task is `DONE` if the server called `succeed()` (and `pause_task()` returns normally), and `ERROR` if it called
+  `abort()` (and `pause_task()` raises `PauseTaskFailedError`). A server that calls `canceled()` ends `PAUSED`, as it
+  should. The composite-level consequences of B1 (parallel teardown, Mission continuing) were *not* reproduced.
+* Two threads calling `pause_task()` and then `resume_task()` at the same time on one client did not fail in a simple
+  test. This does not show B2 is absent: B2 needs specific interleavings (see B2) and is still *Likely*.
+* No other bug was reproduced. B11 in particular is still *Verify*.
+
+Each bug carries a confidence tag:
+
+[cols="1,4"]
+|===
+|Tag |Meaning
+
+|*Reproduced* |Triggered in a test in the container (B1 at client level only).
+|*Certain* |Follows directly from the code paths quoted. The only open question is how often it triggers in practice.
+|*Likely* |Follows from the code but depends on timing, or on a server behaving in a particular (legal) way.
+|*Verify* |Depends on `rclpy` behaviour that has to be checked first. A repro test should come before any fix.
+|===
+
+Suggested way to reproduce and test (inside the container, as described in `CLAUDE.md`):
+
+[source,bash]
+----
+docker compose -f docker/task_manager/docker-compose.yaml run --build task_manager
+python3 -m pytest /ros2_ws/src/task_manager/test/
+----
+
+*Line numbers* refer to `nested-pausing-bug` (HEAD `a4de58c`), not to `feat/pausing`, and will drift. Paths are relative to `task_manager/task_manager/`.
+
+*Scope note.* The pausing stack is not on `main` yet (`main` is at `986f471`). The review targets `feat/pausing` plus the
+open `nested-pausing-bug` commits described above.
+
+== Where pausing stands today
+
+=== The model in one paragraph
+
+Pausing an action-backed task means *cancelling its goal and re-sending the same goal on resume*
+(`ActionTaskClient.pause_task` / `resume_task`). A service-backed task cannot be cancelled, so pausing it *waits out
+`cancel_timeout`* for it to finish. On top of that, a pause request for any task id is *resolved* against the task
+tree: up to the outermost composite (Mission / `perform_in_parallel`), then down to the currently active leaves, arming
+a per-composite "paused flag" on the way. `AtomicSequence` is a special case that is treated as a leaf and restarts
+from step 0. A separate `PausedGroups` registry remembers which ids a group was paused through, so that a resume can
+name a task that has since finished.
+
+=== Why it is hard to keep correct
+
+Roughly a quarter of the 3,600 lines of source is pause machinery:
+
+[cols="2,1,3"]
+|===
+|File |Lines |Pause-related content
+
+|`task_client.py` |725 |`_PauseState`, `pause_task`, `resume_task`, `_finish_if_paused`, pause branches in `_goal_done_cb`
+|`tasks/composite_resolution.py` |374 |Up/down resolution, `PausedGroups`, `find_paused_unit_of`, status re-derivation
+|`tasks/composite_pause_tracker.py` |92 |Per-composite paused flag (`threading.Event` per goal)
+|`tasks/system_tasks.py` |458 |Pause and resume services (about 200 of the lines)
+|`tasks/atomic_sequence.py` |151 |Pause-as-a-unit task type
+|===
+
+Five structural themes explain most of the bugs below. They are referred to as *T1* to *T5* in the catalogue.
+
+[cols="1,5"]
+|===
+|T1 |*Pause is an edge-triggered action on a racy snapshot, not a state.* Resolution takes a snapshot of "currently
+active children" and pauses those. Anything that starts, finishes or changes after the snapshot is missed. There is no
+level-triggered "this subtree is paused, do not start things in it".
+|T2 |*Pause is inferred from terminal goal status.* A paused leaf is a goal that ended `CANCELED` while a `pausing`
+flag was set. Any server that finishes differently on cancel (succeeds, aborts) looks like a natural finish.
+|T3 |*No serialization.* Pause, resume, cancel, stop and task start run on different executor threads and different
+callback groups. `ActionTaskClient` pause state (`pausing`, `paused`, `pause_done`, `goal_done`) is mutated from
+several threads without a lock.
+|T4 |*No parent link.* "Who is my parent composite?" is answered by scanning every composite's list of active children
+(`_find_enclosing_composite`). The lists can be stale, and a resume of an already-finished task needs the extra
+`PausedGroups` registry to find its group.
+|T5 |*Two sources of truth for composite status.* A composite's PAUSED status comes from its own flag and, as a
+fallback, from its children's statuses (`_sync_composite_statuses`), and is only recomputed inside pause/resume calls.
+|===
+
+=== `ActiveTasks` has too many responsibilities
+
+`ActiveTasks` (`active_tasks.py`, 206 lines) started as a registry and now does five jobs:
+
+. *Registry*: add, remove, look up by id or name, `clear_all`.
+. *Change publishing*: the changed-callback behind `/task_manager/active_tasks`, plus `publish_active_tasks()`, which
+  callers invoke by hand after mutating a client's status.
+. *Lifecycle cleanup*: removes a client when its done-callback fires.
+. *Conflict query*: `get_blocking_task()`, with an `assert` that there is at most one.
+. *Task control*: `cancel_task`, `cancel_tasks_on_stop`, `pause_task`, `resume_task`. `resume_task` also contains
+  blocking-conflict handling (cancel the current blocking task first), which duplicates, in a weaker form, the conflict
+  resolution of `TaskRegistrator.start_new_task` (B10). `cancel_tasks_on_stop` iterates the dict without the lock.
+
+The control methods are thin wrappers around `TaskClient` plus that conflict handling, and their only callers are the
+system services in `tasks/system_tasks.py`. They do not need the registry's lock or data. They are in the registry
+because it was the one object every service already had. The cost is that nothing owns the rules for "what may happen
+to a task right now", so those rules live in three places (`ActiveTasks`, `TaskRegistrator`, the services) and the
+serialization needed for B2 has no natural home.
+
+*Direction for the refactoring (all levels):* take cancel, pause, resume and stop out of `ActiveTasks`, into one
+`TaskController`, and leave `ActiveTasks` as registry plus change notification. See L0 and L1. The full design is in link:task_controller.adoc[task_controller.adoc].
+
+Evidence that this is not a one-off: nearly all of the 12 pausing commits (from `#29` up to `a4de58c`) are about pausing, and
+each fix adds a new registry or flag (`PausedGroups` in `4d2cc35`, the unit registry in `642f4a9`, the `_PauseState` refactor in `a6f4e32`).
+
+== Bug catalogue
+
+Severity reflects impact on a running robot: *High* means a task is silently not executed, executed twice, or keeps
+moving while reported paused, or the service hangs.
+
+.Summary
+[cols="1,5,1,1,1"]
+|===
+|ID |Title |Severity |Confidence |Theme
+
+|B1 |A server that succeeds or aborts on cancel is not paused; the rest of a parallel task is torn down (reported case) |High |Reproduced (client level) |T2
+|B2 |Pause, resume, cancel and start race each other (lost resume, eaten cancel, two blocking tasks) |High |Likely |T3
+|B3 |Resume can throw out of the service callback (service hangs, group half-resumed) |High |Certain |-
+|B4 |Children started after a pause request run unpaused (startup windows) |High |Likely |T1
+|B5 |Unpausable members delay pausing the pausable ones (robot keeps moving) |High |Certain |-
+|B6 |A pause that times out later becomes a silent cancel; the Mission aborts |Medium |Certain |T3
+|B7 |A failed pause leaves composites flagged as paused |Medium |Certain |T1, T5
+|B8 |A new `perform_in_parallel` preempts a paused one |Medium |Certain |-
+|B9 |A pause inside an AtomicSequence can abort the whole Mission |Medium |Certain |T2
+|B10 |Resume bypasses same-type conflict resolution; subtask ids of a paused unit are not reserved |Medium |Certain |-
+|B11 |Pause of a terminated or unknown goal is reported as PAUSED, the real result is dropped |Medium |Verify |T2
+|B12 |A composite with no active children is paused as if it were a leaf |Low-Medium |Likely |T1
+|B13 |Stale child ids and scan-based parent lookup misroute pause and resume |Low-Medium |Likely |T4
+|B14 |Resume leaves a window with no goal handle (up to 20 s) |Low-Medium |Certain |T3
+|B15 |Composite status can be stale, and `paused_by` is not shown for composites |Low |Certain |T5
+|B16 |Smaller issues (see list) |Low |Certain |-
+|===
+
+=== B1. A server that succeeds or aborts on cancel is not paused (reported case)
+
+*This is the case reported by the team (a video recorder that succeeds when cancelled).*
+
+*Scenario.* `Mission[ perform_in_parallel[ navigation, video_recording ], dock ]`. The operator pauses
+`video_recording`. The recorder, like many recorders, calls `succeed()` when cancelled ("recording stopped OK").
+
+. The request is resolved up to the Mission and down to both leaves. Both goals are cancelled.
+. `navigation` reports `STATUS_CANCELED`, so `_goal_done_cb` counts it as a pause. `navigation` is `PAUSED`.
+. `video_recording` reports `STATUS_SUCCEEDED`. `_canceled_result()` only accepts `CANCELED`
+  (`task_client.py:461-469`), so this is treated as a natural finish: status `DONE`, done-callbacks fire, the task
+  leaves `ActiveTasks`. `pause_task()` logs "finished successfully before it could be paused" and returns success
+  (`task_client.py:386-396`).
+. `ParallelTaskExecutor._wait_actions_done` sees a finished child and cancels the rest
+  (`parallel_task_executor.py:189-192`). `navigation` is paused, so `_finish_if_paused()` ends it `CANCELED`
+  (`task_client.py:272-292`).
+. `any_done` is true, so the parallel goal succeeds. The Mission holds before `dock` thanks to the flag added in
+  `4d2cc35`, but on resume it just continues to `dock`.
+
+*Impact.* The robot never reaches its navigation goal and the Mission carries on as if it had. This is silent data
+loss, not an error. `4d2cc35` only fixed the symptom that the Mission continued while shown as paused.
+
+*The same root cause appears elsewhere.*
+
+* A server that *aborts* on cancel: the pause fails, and the Mission aborts (`mission.py:104-113`).
+* `system/wait` with `duration <= 0` calls `succeed()` on cancel (`tasks/system_tasks.py:421-422`). Pausing an
+  indefinite wait completes it, and on resume the Mission skips it. A timed `system/wait` restarts with the full
+  duration, not the remaining time.
+
+*Cause.* Whether a goal was paused is deduced from how it ended, while the only reliable signal we have is "we asked
+it to stop for a pause, and it stopped".
+
+*Decision (<<decisions,D1>> and <<decisions,D3>>).* Any terminal result that arrives after our pause-cancel was
+accepted is the pause segment: keep the result in `paused_results`, set the status `PAUSED`, and restart normally on
+resume. This covers a server that succeeds on cancel (the video recorder), one that aborts on cancel, and a child that
+finishes in the window while the group is being paused. The ordering point is the pause request: if the pause lands
+before the task finishes, the task is paused; if the task finished before the pause landed, it is simply done. The
+existing `result_concat_fields` mechanism is made for merging the segments. The cost, accepted: a task that really
+succeeded in the same instant is run again on resume.
+
+Consequences to implement:
+
+* The client classifies the end of a goal by its state (`PAUSING`), not by its goal status (L1 state machine).
+* `ParallelTaskExecutor` must not tear down siblings because a child finished *while the parallel task is pausing or
+  paused*. A child that finishes in that window is `PAUSED`, not done.
+* *Service-backed children in a composite* (<<decisions,D3>>, <<decisions,D5>>): a service call can not be cancelled, so
+  a service child that finishes during a pause has no goal to restart in the same sense. The *composite decides* whether
+  that child counts as completed or as paused. For example `perform_in_parallel` may treat it as paused (and re-run it
+  on resume) while a `Mission` treats it as done and moves on. This must be specified per composite in the README (D10).
+* `system/wait` with no duration is the exception (<<decisions,D2>>): pausing it ends it `CANCELED`, not `PAUSED` and not
+  `DONE`. Change `WaitTask` to call `canceled()` instead of `succeed()` on cancel when `duration <= 0`. A `Mission`
+  or `AtomicSequence` containing such a wait must treat a `CANCELED` child of a pause as expected and not abort. For
+  `AtomicSequence` this must be checked explicitly, because it is paused as a unit and re-runs from step 0 on resume.
+  Test: `AtomicSequence[nav, wait(indefinite)]` paused while in the wait, resumed, and cancelled; and the same inside a
+  Mission.
+
+*Alternatives considered and not taken:* a per-task spec such as `on_pause_finished: restart | complete`; making
+composites immune by ending `CANCELED` and restarting as a whole (that is L3-c, rejected with D6).
+
+*Regression test to add.* Mock action server that succeeds on cancel (and one that aborts on cancel), inside
+`Mission[Parallel[nav, video], dock]`. Assert both leaves are `PAUSED`, the Mission does not reach `dock`, and on
+resume both leaves run again.
+
+=== B2. Pause, resume, cancel and start race each other
+
+There is no lock around transitions. Each system service has its own `MutuallyExclusiveCallbackGroup`
+(`tasks/system_tasks.py:66,113,203,309`), so pause, resume, cancel and stop run concurrently on a
+`MultiThreadedExecutor`, while Mission, Parallel and AtomicSequence threads call cancel as well. Concrete races:
+
+* *Lost resume.* A pause is in flight (`pausing=True`, status still `IN_PROGRESS`). A resume arrives, resolution disarms
+  the composite flags, and the leaf is skipped because it is not yet `PAUSED`
+  (`composite_resolution.py:368`). The resume reports success; the pause then completes and the leaf stays `PAUSED`.
+* *Cancel eaten as a pause.* While `pausing`, a cancel from another thread takes the same `_goal_done_cb` branch that
+  is meant for the pause cancel (`task_client.py:436-444`). The goal is "paused", the cancel's `_goal_done` is never
+  set, and `cancel_task()` times out with `CancelTaskFailedError`.
+* *Window between `pause_done.set()` and `paused = True`* (`task_client.py:443`, `403`). A cancel in that window sees
+  neither state.
+* *Resume races start.* `ActiveTasks.resume_task` cancels the current blocking task and resumes
+  (`active_tasks.py:185-194`) without taking `TaskManager.mutex`, which `_start_single_task` holds
+  (`task_manager_node.py:306`). A blocking task being started concurrently with a resumed blocking one leaves two
+  blocking tasks active, and `get_blocking_task` then fails its `assert` (`active_tasks.py:129`).
+
+*Fix.* L1 below: one control lock (or command queue) for start, pause, resume and cancel, and an explicit state
+machine in `ActionTaskClient`. A first step is the `_pause_lock` idea already tried on branch
+the unmerged branch `worktree-sometimes-paused-is-cancelled` (`5800d5f`, "Pausing after timeout").
+
+*Regression tests.* Concurrent pause and resume of the same leaf; concurrent pause and cancel; concurrent resume of a
+blocking leaf and start of another blocking task (loop it, 100 iterations).
+
+=== B3. Resume can throw out of the service callback
+
+`ResumeTasksService._try_resume` only catches `ResumeTaskFailedError` (`tasks/system_tasks.py:312-318`), but the call
+chain can also raise:
+
+* `CancelTaskFailedError` from `ActiveTasks.resume_task`, when the blocking task that has to be cancelled for the
+  resumed one will not cancel (`active_tasks.py:192`).
+* `KeyError` from the second lookup in `ActiveTasks.pause_task` / `resume_task` (`active_tasks.py:169,183`), when the
+  leaf finishes between the status check in `pause_or_resume_group` (`composite_resolution.py:364-367`, which treats
+  `KeyError` as benign) and the callback.
+
+Effects: the exception propagates through `pause_or_resume_group`, so the *remaining leaves of the group are never
+processed* while composite flags are already armed or disarmed, `_sync_composite_statuses` and
+`publish_active_tasks` are skipped, and (for the uncaught `CancelTaskFailedError`) the service call never answers.
+The `KeyError` is at least caught in `service_cb` but reports the whole request as failed.
+
+*Fix.* Catch the full set (`PauseTaskFailedError`, `ResumeTaskFailedError`, `CancelTaskFailedError`, `KeyError`) in
+`_try_pause` / `_try_resume`, treat `KeyError` as "finished on its own", and always run sync and publish in a
+`finally`. Small and safe, can be done first.
+
+*Test.* Unit test with a blocking task whose `cancel_task` raises.
+
+=== B4. Children started after a pause request run unpaused
+
+Pause only acts on children that are *active at the moment of the snapshot*. The flag does not stop new ones.
+
+* *Mission gap.* `Mission.execute_cb` records the subtask id (`mission.py:96`) before the subtask is added to
+  `ActiveTasks`. `TaskRegistrator.start_new_task` calls `start_task_async` first, which can take up to 10 s plus 10 s
+  for `wait_for_server` and goal acceptance, and only then `active_tasks.add` (`task_registrator.py:122-124`). A pause
+  in that window lists the id, hits `KeyError` in `resolve_down` (`composite_resolution.py:177-178`), pauses nothing,
+  and reports success. The subtask then runs while the Mission shows `PAUSED`.
+* *Parallel startup.* `_gather_and_try_to_run_subtasks` starts children one by one (`parallel_task_executor.py:148`)
+  and never waits on its paused flag (only `Mission` does). Children started after the pause run unpaused.
+* *Same gap for cancel.* A cancel by id of a task that is still starting hits `KeyError` and is reported as a
+  successful cancel (`tasks/system_tasks.py:133-136`), while the task then starts and runs.
+
+*Fix.* Make pause a *state* (T1): composites check "am I, or any ancestor, paused?" before starting each child, and
+`TaskRegistrator` registers the task in `ActiveTasks` before `start_task_async` (as `RECEIVED`) so that it can be seen
+and addressed while starting. See L2.
+
+*Test.* Mock server with a slow goal acceptance (for example 2 s), pause during it, assert the subtask ends up paused
+or never starts.
+
+=== B5. Unpausable members delay pausing the pausable ones
+
+`pause_or_resume_group` pauses the leaves one after another (`composite_resolution.py:363-371`). A service-backed leaf
+blocks in `ServiceTaskClient.pause_task` for up to `cancel_timeout` (`task_client.py:657-669`). If the service leaf
+comes first in the list, the navigation sibling keeps driving for up to that long (5 s by default) *after* the pause
+was requested. Every action leaf waits for its own cancel in turn, so pause latency grows linearly with group size, and
+the pause service (own `MutuallyExclusiveCallbackGroup`) blocks all other pause requests meanwhile.
+
+*Fix.* Two phases: first issue all cancel requests asynchronously, then wait for all of them, and order services last.
+*Decision (<<decisions,D5>>):* pausing a service-backed task on its own is rejected up front. Inside a composite, the
+composite handles the service-backed task and decides whether it counts as completed or as paused (for example
+`perform_in_parallel` as paused, `Mission` as done). Review this again before implementing it, because it changes a
+documented behavior (README, `test_pause_service_backed_task_succeeds_if_it_finishes_within_grace_period`).
+
+*Test.* `Parallel[service(3 s), nav]`, pause, assert nav's cancel was requested within a small bound and not after
+the service finished.
+
+=== B6. A pause that times out becomes a silent cancel
+
+`pause_task` waits for the cancel response, then up to `cancel_timeout` again for the goal to end
+(`task_client.py:376-401`; worst case about twice the timeout), and then clears `pausing` and raises
+`PauseTaskFailedError`. The goal is still being cancelled. When it ends, `_goal_done_cb` sees `pausing == False` and
+treats it as a genuine `CANCELED` (`task_client.py:448-454`): the task is removed from `ActiveTasks`, and the enclosing
+Mission sees `CANCELED` without a cancel request and *aborts* (`mission.py:104-113`). The operator was told "pause
+failed" and the system then cancelled the task anyway.
+
+*Already attempted:* `5800d5f` (unmerged branch `worktree-sometimes-paused-is-cancelled`) adds `pause_timed_out` and a
+status-changed callback so that the late pause completes as a pause. It is not merged, adds a second lock, and grows
+`_PauseState` further. Worth reviewing, but see L1: a state machine makes this a normal transition (`PAUSING` to
+`PAUSED` when the goal ends, whenever that is).
+
+*Decision (<<decisions,D9>>).* A pause that times out is a failed pause: it is reported as a failure and the related
+tasks are stopped (an attempt is made, and each task reports its own result). So the task being cancelled is now the
+specified outcome. What stays a bug is that nothing says so: today the cancel is silent, the operator is told only that
+the pause failed, and the Mission aborts without a cause. The L1 state machine (`PAUSING` to `CANCELLING`) makes this
+an explicit, reported transition.
+
+*Test.* Mock server that takes 1.5 x `cancel_timeout` to cancel; assert the pause is reported as failed and the stop of
+the related tasks is attempted and reported, not silent.
+
+=== B7. A failed pause leaves composites flagged as paused
+
+`resolve_down(..., paused_flag=True)` arms every composite's flag *before* any leaf is paused
+(`composite_resolution.py:165-168`, `355`). If a leaf then fails to pause (service-backed, slow cancel),
+`pause_or_resume_group` returns `False` and the service reports failure, but the flags stay armed and
+`_sync_composite_statuses` reports the composites as `PAUSED` (`composite_resolution.py:293-297`) while the leaf keeps
+running. The Mission will also stop at its next subtask boundary. Response and state disagree. README documents
+"best-effort, succeeded parts are not rolled back", but not that the composite state stays paused on failure.
+
+*Fix.* *Decision (<<decisions,D9>>):* if a pause or resume fails, the failure is reported and an attempt is made to
+stop the related tasks. There is no rollback. The tasks report their own results on `/task_manager/results`. So the
+armed flags can not outlive a failed pause: a failure ends the group instead of leaving it half paused.
+
+=== B8. A new `perform_in_parallel` preempts a paused one
+
+`ParallelTaskExecutor` keeps `_latest_goal_handle` and raises `PreemptedException` in older goals when a new goal is
+accepted (`parallel_task_executor.py:149,186,307`), and runs goals under `_execution_lock` (`:88`). The task spec says
+`reentrant=True`, so `TaskRegistrator` will not cancel the older one, but the executor does. A paused parallel task is
+in `_wait_actions_done`, so a new parallel task anywhere makes it tear down its children (including paused ones, via
+`_finish_if_paused`) and end `ABORTED`, which aborts its Mission. This contradicts `c4609fa` ("paused tasks are not
+cancelled when a task of the same type starts"). More generally, two parallel tasks (for example in two nested
+Missions) can not coexist.
+
+*Fix.* Remove the preemption (state is per goal already: `_goal_id_to_subtask_ids`) or exempt paused goals, and drop
+the global lock. *Decision (<<decisions,D8>>):* this is a bug and is to be fixed.
+
+=== B9. A pause inside an AtomicSequence can abort the whole Mission
+
+Pausing an AtomicSequence cancels its goal, which cancels the running child (`atomic_sequence.py:97-116`). If the child
+cannot be cancelled within its `cancel_timeout` (a service of 10 s, a slow server), the sequence *aborts* by design, and
+the Mission aborts with it. A plain leaf in the same situation just fails the pause and keeps running. A server that
+aborts on cancel has the same effect. The behaviour is documented, but the asymmetry is surprising: pausing *anything*
+should never be able to destroy the mission.
+
+*Fix.* The earlier idea (a failed AtomicSequence pause leaves it running, as for a plain leaf) is *superseded by
+<<decisions,D9>>*: a failed pause is reported and the related tasks are stopped, so the sequence and its Mission may
+end. That is now accepted behavior, and the real fix is that it is reported and explicit. The L1 state machine is still
+needed so that the sequence's client can tell "ended because of the pause" from "ended on its own".
+
+=== B10. Resume bypasses same-type conflict resolution, and unit subtask ids are not reserved
+
+* `TaskRegistrator.start_new_task` cancels an already running task of the same type unless `reentrant`
+  (`task_registrator.py:89-90`), but ignores paused ones (`c4609fa`). `ActiveTasks.resume_task` only handles the
+  *blocking* conflict (`active_tasks.py:185-192`). Pause `fibonacci`, start another `fibonacci`, resume the first: two
+  non-reentrant tasks run at once (the code even logs "Found multiple task clients with the same name!" for this
+  situation, `task_registrator.py:164-165`).
+* While an AtomicSequence is paused, its subtasks are not in `ActiveTasks`, so their ids are free. If something else
+  takes one of them, the resume fails with `DuplicateTaskIdException` at the subtask start and the sequence aborts.
+
+*Fix.* Move conflict resolution for "becoming active" into one function used by both start and resume. On a conflict,
+resume cancels the running task, as a start does (<<decisions,D7>>).
+
+=== B11. Pause of a terminated or unknown goal is reported as PAUSED
+
+`_handle_cancel_response` handles `ERROR_GOAL_TERMINATED` and `ERROR_UNKNOWN_GOAL_ID` by calling
+`self._result_future.cancel()` (`task_client.py:329-340`). That makes `_goal_done_cb` run with a cancelled future. During
+a pause, `_canceled_result()` returns `True` for a cancelled future, so the call is treated as a successful pause
+(`task_client.py:436-444`) although the goal may have *succeeded* in the meantime: the real result is dropped and a
+resume runs the finished task again. *Verify* first that rclpy's `Future.cancel()` invokes done callbacks (believed
+yes), and that the cancel response can overtake the result response. `test_task_clients.py:116-117` covers these return
+codes only for cancel, not for pause.
+
+*Fix.* In the pause path, `GOAL_TERMINATED` means "wait for the real result", not "paused".
+
+=== B12. A composite with no active children is paused as if it were a leaf
+
+`resolve_down` returns the composite itself when it has no active children (`composite_resolution.py:170-172`; the
+docstring accepts this). Then `ActionTaskClient.pause_task` is called on the Mission or parallel task and *cancels its
+own goal*, to be restarted from scratch on resume. This happens at startup (before the first child is recorded) and, for
+a parallel task, in the up to 100 ms window in which all children have finished and `_wait_actions_done` has not yet
+noticed. In the latter case the parallel task is cancelled right before succeeding and a resume re-runs finished work
+(`_cancel_remaining_tasks_and_get_results` ends `canceled()` whenever a cancel was requested,
+`parallel_task_executor.py:211-214`).
+
+=== B13. Stale child ids and scan-based parent lookup
+
+`_subtasks_per_mission` and AtomicSequence `_current_child` keep the id of the *finished* child until the next child
+starts or the goal ends (`mission.py:96,124`, `atomic_sequence.py:90,127`). Task ids may be supplied by the caller, so
+they can be reused (for example every pair in a Mission calling its navigation task `nav`).
+`_find_enclosing_composite` returns the *first* composite that lists the id (`composite_resolution.py:182-195`), and
+`find_paused_unit_of` silently refuses to redirect if two paused units list the same id (`composite_resolution.py:133`),
+so a resume by that id then fails with "task is not active". Each hop of the up-walk also scans all composites and takes
+`ActiveTasks` locks, so resolution is quadratic.
+
+=== B14. Resume leaves a window with no goal handle
+
+`resume_task` sets `paused = False` and `_goal_handle = None` and then runs `start_task_async`, which may block for up to
+`2 x server_wait_timeout` (20 s) (`task_client.py:414-421`, `193-215`). In this window the status is still `PAUSED`, a
+cancel fails with "goal handle does not exist" (`task_client.py:238-239`), a second pause fails the same way, and a
+second resume is a no-op. Covered by the L1 state machine (`RESUMING` state, cancel allowed).
+
+=== B15. Composite status can be stale
+
+`_sync_composite_statuses` runs only at the end of pause and resume calls (`composite_resolution.py:373`). Any other
+event (a paused child cancelled, a subtask finishing during a pause, a failed pause) leaves the displayed status as it
+was. Composite `paused_by` is never set, because composites are not paused through `pause_task`, so the status topic
+shows a paused Mission with an empty `paused_by` next to a paused leaf with one. The flag and the child-derived status
+are two sources of truth (T5), and in practice every composite has a flag, so the child-derived branch is mostly dead
+weight.
+
+=== B16. Smaller issues
+
+* Cancelling a *paused* task reports `CANCELED` even when `cancel_reported_as_success` is set, while cancelling a
+  running one reports `DONE` (`_finish_if_paused` sets `CANCELED` directly, `task_client.py:289`, versus
+  `_fill_in_task_details`, `task_client.py:489-492`).
+* `_goal_done_cb` for a cancelled future uses an empty `Result()` instead of `_merged_result()`, dropping partial
+  results of earlier pause segments (`task_client.py:448-450`).
+* `from multiprocessing import Event` (`task_client.py:19`): process-shared events (semaphore-backed) are used where
+  `threading.Event` is meant, including one per `_wait_for_future_to_complete` call. Heavy, and can fail in sandboxes
+  without `/dev/shm`.
+* `_is_nested_mission_start` uses `source.startswith(("Mission", ...))` (`task_registrator.py:147`): any external client
+  with a source such as `"MissionPlanner"` is exempted from the same-type cancel.
+* `PausedGroups` is only cleaned lazily, at the start of a pause call (`tasks/system_tasks.py:218`), so entries for
+  cancelled groups linger and can map a reused id to a dead root.
+* `successful_pauses` / `successful_resumes` list the *requested* ids, not what was actually paused. Callers can not tell
+  which leaves were affected, or that nothing was.
+* Pause and resume are blocking service callbacks on executor threads, each service in its own mutually exclusive
+  group. A slow pause blocks every other pause. The `run_in_own_thread` fix (`b0da387`) covered the action servers
+  only.
+* Cancel-timeout hierarchy is tuned by hand (`_atomic_sequence_cancel_timeout` = longest declared + 1 s,
+  `perform_in_parallel` hard-coded 6.0 s, Mission uses the TaskSpecs default 5.0 s rather than
+  `default_cancel_timeout`). Nesting depth is not summed.
+* Pausing is allowed for every action task whether or not the server is safe to restart (there is no `pausable` flag).
+* README typos in the pausing section ("explicitely", "subtask subtask").
+
+== Fix plan
+
+The order is: cheap, local, low-risk fixes first; then the structural fix for races; then semantic decisions. The time
+estimates in the headings are rough guesses from scope, not measured, and should be re-estimated by the team. Review and evaluate the plan after each phase to ensure correctness and completeness.
+
+=== Phase 0: repro tests (about 2 days)
+
+Write the failing tests first, so that each later change is proven. Add to `integration_tests/mock_servers.py`:
+
+* `succeed_on_cancel` and `abort_on_cancel` fibonacci servers (B1, B9).
+* `slow_cancel` server whose cancel takes a configurable time (B6, B9).
+* `slow_accept` server whose goal acceptance is delayed (B4).
+
+Then one failing test per bug in the catalogue, marked `xfail` with the bug id. Run the loop-style race tests (B2) with
+a repeat count so flakiness is visible. Verify the `rclpy` assumption of B11 here.
+
+Make sure we have tests for all the TaskManager features.
+
+=== Phase 1: local fixes, no architecture change (about 3 days)
+
+[cols="1,4,2"]
+|===
+|Bug |Change |Risk
+
+|B3 |Catch all expected exceptions in `_try_pause` / `_try_resume`; treat `KeyError` as finished; run sync and publish in `finally` |Low
+|B16 |`_finish_if_paused` honours `cancel_reported_as_success`; use `_merged_result()` in the cancelled-future branch; `threading.Event`; exact-match source check; response lists |Low
+|B11 |In the pause branch, handle `GOAL_TERMINATED` as "wait for result" |Low
+|B7 |On a failed pause, report failure and stop (cancel) the group instead of leaving flags armed (D9) |Low
+|B5 |Pause leaves in two phases (request all cancels, then wait) and put service-backed leaves last |Medium
+|B8 |Exempt paused goals from preemption, or remove preemption |Low-Medium
+|B12 |Do not treat a composite as a leaf when it has no active children; wait for or ignore it instead |Medium
+|===
+
+=== Phase 2: serialize and make the client a state machine, L1 (about 1 week)
+
+Implement L0's `TaskController` extraction first, then L1 (see <<levels,below>>). This closes B2, B6, B14 and most of B10 and B9, and makes the Phase 1 fixes for
+B3 and B11 structural instead of defensive. Do this before adding any new pause feature.
+
+=== Phase 3: pause as state, B1 and B4 (1 to 2 weeks, depends on decisions)
+
+D1, D3 and D6 are decided: servers that finish on a pause are paused, and the architecture is L2.
+
+* B4: composites and `TaskRegistrator` consult a paused state before starting a child; register tasks before starting
+  them.
+* B1: implement D1 and D3 (a terminal result during a pause is a pause; no sibling teardown while pausing or paused). Make an indefinite `system/wait` end `CANCELED` (D2).
+* B13, B15: removed by L2 (parent links; composite status becomes a property).
+
+=== Phase 4: documentation
+
+Rewrite the README pausing section from scratch (<<decisions,D10>>), based on the decisions in this document, and add a page under `docs/design` on *what pause guarantees*. The README is rewritten, not patched, so that the guarantees and the tests describe the same behavior. Fix the typos.
+
+== Simplification options [[levels]]
+
+Levels are cumulative in effort but not strictly in dependency. L0 and L1 are recommended regardless. The team chose L2
+(D6); of the L3 options only part of L3-b is adopted, the rest is kept for reference.
+
+=== L0: pure cleanups (hours)
+
+Replace `multiprocessing.Event`, centralize the status/paused logic into small helpers, fix the typos, delete the dead
+child-derived status branch if every composite has a flag. No behaviour change.
+
+*Extract `cancel_task`, `cancel_tasks_on_stop`, `pause_task` and `resume_task` from `ActiveTasks`.* They move unchanged
+into a `TaskController(active_tasks)` that the cancel, pause, resume and stop services (and `TaskRegistrator`, for
+cancelling a conflicting task) use. `ActiveTasks` keeps registry, notification and `get_blocking_task`. Their only
+production callers are in `system_tasks.py`, so this is a small, mechanical change. It is the prerequisite for L1: the
+control lock needs an owner that is not the registry.
+
+=== L1: one control lock and an explicit state machine (about 1 week)
+
+*What.*
+
+* The `TaskController` extracted in L0 owns one lock that serializes *start, pause, resume, cancel and stop*. The lock
+  does *not* live in `ActiveTasks`, which stays a registry. Conflict resolution for "becoming active" (blocking and
+  same-type, today split between `TaskRegistrator` and `ActiveTasks.resume_task`) moves into the controller, so start
+  and resume share it (B10). It also calls `publish` itself after a state change, which removes the manual
+  `publish_active_tasks()` calls and the `publish=False` parameters. Long waits (cancel responses) happen outside the
+  lock via futures, with the state recording what is in flight.
+* `ActionTaskClient` gets one state field instead of `pausing`, `paused`, `pause_done`, `pause_timed_out`, `goal_done`:
++
+----
+IDLE -> RUNNING -> PAUSING -> PAUSED -> RESUMING -> RUNNING
+                \-> CANCELLING -> DONE | ERROR | CANCELED
+----
++
+`_goal_done_cb(future)` becomes a lookup of `(state, how the goal ended)` to the next state, in one place, rather than
+branches scattered over three methods.
+
+*Removes or simplifies.* B2, B6, B14 outright; B9 and B10 partly; the `pausing`/`paused` flag mutations; the
+`_finish_if_paused` special cases.
+
+*Costs.* Touches `task_client.py` heavily (the unit tests for it need rewriting) and needs care to avoid deadlock with
+the done-callbacks that run under the lock. No change to the ROS API.
+
+=== L2: explicit parent links, composites own pause/resume (2 to 3 weeks) [chosen, D6]
+
+*What.*
+
+* `TaskDetails.parent_id` is set when a composite starts a child (the composites already call `execute_task` in
+  process, so this needs an extra argument, not a message change).
+* Each composite implements `pause()` / `resume()` for itself: Mission stops dispatching and pauses its running child,
+  Parallel pauses its children (in parallel, B5), AtomicSequence pauses itself. A composite has a `paused` property that
+  also covers its ancestors; starting a child while paused is refused or queued (B4).
+* The service resolves a task id with `parent_id` upward to the root, then calls `root.pause()`.
+
+*Deletes.* `_find_enclosing_composite`, `_find_outermost_unit`, `_resolve_start_id`, `resolve_down`,
+`find_paused_unit_of`, `_subtask_ids`, `PausedGroups`, `_sync_composite_statuses` (status becomes a property of the
+composite), the stale-id dictionaries, and the `composites` / `units` registries. Most of the 374 plus 92 lines of
+`composite_resolution.py` and `composite_pause_tracker.py` would go. Fixes B4, B7, B12, B13, B15 by construction.
+
+*Constraints from decisions.* Pausing or resuming by the id of a single child must keep working (D11): the service
+resolves the id upward through `parent_id` to the root. A pause or resume that fails stops the tasks involved (D9).
+One pauser only (D4), so a composite's paused state is a boolean.
+
+*Costs.* Larger rewrite of Mission, Parallel and AtomicSequence; new tests for the composite protocol; behaviour of
+nested groups must be re-specified (for example whether a resume by the id of a finished child is still supported,
+today `PausedGroups`, see D11).
+
+=== L3: simplify the semantics
+
+These are product-level choices that remove whole categories of code. They can be combined.
+
+[cols="1,3,3"]
+|===
+|Option |Idea |Effect
+
+|*L3-a: pause always acts on the tree root* |Today a pause by any id is already resolved to the outermost composite
+(`4d2cc35`). Make that the documented rule: "pause stops the whole mission". Optionally accept only root ids, or
+document that any id is shorthand for its root. |Removes the up/down ambiguity from the API. No way to pause a single
+child of a parallel task (today there is none either).
+
+|*L3-b: `pausable` per task, no waiting out services* (*partly adopted*, D5: only the rejection of pausing a service-backed task on its own) |Add a `pausable` spec (`restart`, `none`). Reject a pause that
+includes a `none` task up front, instead of pausing the others and waiting out the service. |Removes B5 and the
+"service finishes during the pause" special cases (and the README paragraph about Mission and service subtasks).
+Pause fails fast and leaves everything running.
+
+|*L3-c: restart at the composite, everywhere* (*rejected*, D6) |Pausing a Mission or Parallel is the same as pausing an AtomicSequence
+today: cancel its own goal, store it, re-send on resume. A composite always ends `CANCELED` after its own cancel (as
+AtomicSequence does). Mission resumes from the interrupted subtask (needs a start index in its goal, a precedent is the
+`mission-restart-on-resume` branch, `6a36da1`), Parallel restarts all children. |There is *no* up/down resolution and
+no composite flags: only the root's client is paused. Removes all of `composite_resolution.py`, the paused-flag
+tracker, and `PausedGroups`. Fixes B1 for composites (the "video succeeded" server just ends `CANCELED` in a cancelled
+parallel task), B4, B7, B12, B13, B15. Behaviour change: nav and video both restart on resume, which is what the
+reporter expected ("both leaves PAUSED, then restarted on resume"). A completed earlier subtask is never re-run.
+Costs: running subtasks lose their in-flight progress on resume, as they do today for leaves; Mission needs resume
+bookkeeping.
+|===
+
+=== Recommendation
+
+*Agreed direction (D6):* L2. L3-c is dropped.
+
+. Do *Phase 0 and Phase 1* now: they are independent of the architecture and remove the sharp edges.
+. Do *L0 and L1* next, starting with the `TaskController` extraction (see link:task_controller.adoc[task_controller.adoc]).
+  Every other option is easier to implement on top of a locked state machine.
+. Then do *L2*: parent links, composites own pause and resume, leaf-level resume in place.
+. Add the D5 rejection of pausing a service-backed task on its own, after re-reviewing it.
+
+== Decisions [[decisions]]
+
+The team answered all eleven questions of the first draft. The detail of each decision is in the section named in the
+last column.
+
+[cols="1,3,5,2"]
+|===
+|# |Topic |Decision |Details in
+
+|D1 |Server finishes (succeeds or aborts) after a pause-cancel |*Treat as paused.* Status `PAUSED`, restart on resume. |B1
+|D2 |Pausing `system/wait` |*Set as cancelled.* `AtomicSequence` and `Mission` must handle that child result. |B1
+|D3 |Child finishes while its parallel group is pausing or paused |*If the pause lands first, the child is paused* and restarts normally. No sibling teardown. A child that finished before the pause landed is just done. A service-backed child is handled by its composite (see D5). |B1
+|D4 |Several pausers |*One pauser is enough.* No ref-counting, one `paused_by` per task. A pause of an already paused task is a no-op success. |link:task_controller.adoc[task_controller.adoc], outcome table
+|D5 |Pausing a service-backed task |*Not allowed on its own.* Inside a composite, the composite decides whether the service task counts as completed or paused (for example Parallel: paused, Mission: done). Review again before implementing. |B5
+|D6 |Architecture |*L2.* Resume in place stays. L3-c is dropped. |L2, Recommendation
+|D7 |Resume while a same-type or blocking task runs |*Cancel the running task*, as for a start. |B10
+|D8 |A new `perform_in_parallel` preempts a paused one |*A bug, to be fixed.* |B8
+|D9 |A pause or resume partly fails |*Report the failure and attempt to stop the related tasks.* No rollback. Tasks report their own results. Applies to timed-out pauses (B6) and AtomicSequence pauses (B9). |B6, B7, B9
+|D10 |README |*Redo the pausing section* from these decisions. |Phase 4
+|D11 |Client compatibility |*Yes, clients rely on pausing and resuming by a single child id.* |L2
+|===
+
+.Points still open
+* *D9, owner:* TBD. Which component attempts the stop of the related tasks after a failed pause or resume: the service,
+  the composite, or the controller (see `task_controller.adoc`, TC8).
+* *D5, owner:* TBD. Where the rule "reject pausing a service-backed task on its own, allow it inside a composite" lives
+  (see `task_controller.adoc`, TC7).
+* *D5, composites:* the README must state for each composite (Mission, `perform_in_parallel`, AtomicSequence) whether a
+  service child counts as completed or as paused.
+* *D11:* `successful_pauses` contents and resuming by the id of a finished task were not answered. Both are treated as
+  relied upon until a client check says otherwise. `PausedGroups` therefore needs a replacement in L2.
+* *D2:* only the indefinite wait is covered. A timed wait still restarts with its full duration.
+* *D5:* needs a second look before implementation, because it changes documented behavior and an existing test.
+
+== Appendix A: test coverage gaps
+
+* No test combines a server that finishes (succeeds or aborts) on cancel with pause (B1, B9). A throwaway client-level repro written for this review
+  (not committed) confirms B1; Phase 0 should turn it into proper `xfail` tests.
+* `test_task_clients.py:116-117` covers `ERROR_GOAL_TERMINATED` and `ERROR_UNKNOWN_GOAL_ID` for cancel only (B11).
+* No concurrency tests for pause, resume, cancel and start (B2). `test_pause_thread_starvation.py` is the only
+  concurrency-oriented test and covers executor starvation only.
+* `test_composite_resolution.py` (738 lines) works with mocks and exercises resolution in isolation. It does not cover
+  startup windows (B4), stale ids (B13) or a failing leaf (B3, B7).
+* No test for resume conflicting with a running same-type or blocking task (B10).
