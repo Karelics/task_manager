@@ -20,7 +20,6 @@ import time
 import unittest
 import uuid
 from asyncio import Future
-from typing import List, Optional
 
 # ROS
 import rclpy
@@ -133,7 +132,7 @@ class TaskManagerTestNode(unittest.TestCase):
             time.sleep(0.01)
 
     def start_fibonacci_action_task(
-        self, task_name: str = "fibonacci", run_time_secs: int = 3, task_id: Optional[str] = None
+        self, task_name: str = "fibonacci", run_time_secs: int = 3, task_id: str | None = None
     ) -> ClientGoalHandle:
         """Creates the goal and starts Fibonacci task.
 
@@ -146,10 +145,10 @@ class TaskManagerTestNode(unittest.TestCase):
 
     def start_add_two_ints_service_task(
         self,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
         task_name: str = "add_two_ints",
         run_time_secs: int = 0,
-        request: Optional[AddTwoInts.Request] = None,
+        request: AddTwoInts.Request | None = None,
     ) -> ClientGoalHandle:
         """Creates the goal and starts the Add Two Ints Service task."""
         goal = create_add_two_ints_task_goal(task_id, task_name, run_time_secs, request)
@@ -167,7 +166,7 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def execute_cancel_task(self, task_ids: List[str]) -> ExecuteTask.Result:
+    def execute_cancel_task(self, task_ids: list[str]) -> ExecuteTask.Result:
         """Calls system/cancel_task with given task IDs."""
         cancel_goal = CancelTasks.Request()
         cancel_goal.cancelled_tasks = task_ids
@@ -280,9 +279,9 @@ class TaskManagerNodeParams:
 
 
 def create_fibonacci_task_goal(
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
     task_name: str = "fibonacci",
-    goal: Optional[Fibonacci.Goal] = None,
+    goal: Fibonacci.Goal | None = None,
     run_time_secs: int = 0,
 ) -> ExecuteTask.Goal:
     """Populates ExecuteTask goal for Fibonacci task based on given arguments."""
@@ -299,10 +298,10 @@ def create_fibonacci_task_goal(
 
 
 def create_add_two_ints_task_goal(
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
     task_name: str = "add_two_ints",
     run_time_secs: int = 0,
-    request: Optional[AddTwoInts.Request] = None,
+    request: AddTwoInts.Request | None = None,
 ):
     """Populates AddTwoInts request based on given arguments."""
     if task_id is None:

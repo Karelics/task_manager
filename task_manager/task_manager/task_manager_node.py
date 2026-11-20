@@ -22,7 +22,7 @@ import time
 import uuid
 from importlib import import_module
 from threading import Lock
-from typing import Any, Dict, Tuple
+from typing import Any
 
 # ROS
 import rclpy
@@ -87,7 +87,7 @@ class TaskManager(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
-        self.known_tasks: Dict[str, TaskSpecs] = {}
+        self.known_tasks: dict[str, TaskSpecs] = {}
 
     def declare_tasks(self):
         """Populates the known tasks based on the ROS parameter configuration."""
@@ -222,13 +222,13 @@ class TaskManager(Node):
         response.task_id = request.task_id
         return response
 
-    def _start_single_task(self, request: ExecuteTask.Goal, response: ExecuteTask.Result) -> Tuple[TaskClient, str]:
+    def _start_single_task(self, request: ExecuteTask.Goal, response: ExecuteTask.Result) -> tuple[TaskClient, str]:
         """Starts a single task and handles error reporting.
 
         :param request: ExecuteTask.Goal message containing the task to be started
         :param response: ExecuteTask.Result message to be filled with error code if starting the task fails
-        :return: If tasks starts successfully, returns the TaskClient and None.
-          If starting the task fails, returns None and the error code.
+        :return: If tasks starts successfully, returns the TaskClient and None. If starting the task fails, returns None
+            and the error code.
         """
         # Mutex lock required, since we need to be sure that the previous blocking task has
         # truly finished before we try to start another one from another thread.
@@ -285,7 +285,7 @@ class TaskManager(Node):
         return task_client, error_code
 
     @staticmethod
-    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None) -> Tuple[TaskStatus, str]:
+    def _wait_for_task_finish(task_client: TaskClient, goal_handle: ServerGoalHandle = None) -> tuple[TaskStatus, str]:
         """Waits for the running task to finish.
 
         :raises CancelTaskFailedError: If the task cancellation fails
@@ -297,7 +297,7 @@ class TaskManager(Node):
             time.sleep(1 / 50)
         return task_client.task_details.status, json.dumps(extract_values(task_client.task_details.result))
 
-    def _active_tasks_changed_cb(self, active_tasks: Dict[str, TaskClient]) -> None:
+    def _active_tasks_changed_cb(self, active_tasks: dict[str, TaskClient]) -> None:
         """Publishes active tasks to local ROS topic."""
         task_messages = []
         for task_client in active_tasks.values():

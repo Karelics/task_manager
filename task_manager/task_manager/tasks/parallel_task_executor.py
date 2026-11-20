@@ -15,8 +15,8 @@
 #  ------------------------------------------------------------------
 import time
 import uuid
+from collections.abc import Callable
 from threading import Lock
-from typing import Callable, List, Optional, Tuple
 
 # ROS
 import rclpy
@@ -44,7 +44,7 @@ class ParallelTaskExecutor(SystemTask):
         node: Node,
         topic: str,
         prepare_execute_task_result_cb: Callable[[ExecuteTask.Goal], ExecuteTask.Result],
-        start_single_task_cb: Callable[[ExecuteTask.Goal, ExecuteTask.Result], Tuple[Optional[TaskClient], str]],
+        start_single_task_cb: Callable[[ExecuteTask.Goal, ExecuteTask.Result], tuple[TaskClient | None, str]],
     ) -> None:
         """
         :param node: Reference to a parent node
@@ -64,7 +64,7 @@ class ParallelTaskExecutor(SystemTask):
         )
         self._timeout = self._node.declare_parameter("parallel_executor_task.cancel_timeout", 5.0).value
 
-        self._latest_goal_handle: Optional[ServerGoalHandle] = None
+        self._latest_goal_handle: ServerGoalHandle | None = None
         self._execution_lock = Lock()
 
         self._prepare_execute_task_result_cb = prepare_execute_task_result_cb
@@ -86,7 +86,7 @@ class ParallelTaskExecutor(SystemTask):
             goal_handle.succeed()
             return PerformInParallel.Result(message="WARNING: No subtasks provided for parallel execution")
 
-        subtasks: List[ParallelTask] = []
+        subtasks: list[ParallelTask] = []
         message = ""
         try:
             subtasks = self._gather_and_try_to_run_subtasks(goal_handle, subtasks)
@@ -110,8 +110,8 @@ class ParallelTaskExecutor(SystemTask):
         return result
 
     def _gather_and_try_to_run_subtasks(
-        self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]
-    ) -> List[ParallelTask]:
+        self, goal_handle: ServerGoalHandle, subtasks: list[ParallelTask]
+    ) -> list[ParallelTask]:
         """Creates subtasks one by one and tries to start them.
 
         Each subtask that started successfully is put into the list of subtasks.
@@ -145,7 +145,7 @@ class ParallelTaskExecutor(SystemTask):
 
         return subtasks
 
-    def _wait_actions_done(self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]) -> None:
+    def _wait_actions_done(self, goal_handle: ServerGoalHandle, subtasks: list[ParallelTask]) -> None:
         """Spins until rclpy not ok or some task is done for some reason.
 
         :param goal_handle: Handle of the parallel goal
@@ -171,7 +171,7 @@ class ParallelTaskExecutor(SystemTask):
             time.sleep(0.1)
 
     def _cancel_remaining_tasks_and_get_results(
-        self, goal_handle: ServerGoalHandle, subtasks: List[ParallelTask]
+        self, goal_handle: ServerGoalHandle, subtasks: list[ParallelTask]
     ) -> PerformInParallel.Result:
         """Cancels tasks that have been already launched asynchronously and retrieves their results.
 
@@ -197,7 +197,7 @@ class ParallelTaskExecutor(SystemTask):
 
         return result
 
-    def _cancel_tasks_and_wait_for_finish(self, subtasks: List[ParallelTask]) -> bool:
+    def _cancel_tasks_and_wait_for_finish(self, subtasks: list[ParallelTask]) -> bool:
         """Cancels tasks that have been already launched asynchronously and waits for them to finish.
 
         Makes use of `cancel_timeout` parameter to limit the waiting time.
@@ -222,7 +222,7 @@ class ParallelTaskExecutor(SystemTask):
             return True
         return False
 
-    def _get_results(self, subtasks: List[ParallelTask], result: PerformInParallel.Result) -> Tuple[bool, bool]:
+    def _get_results(self, subtasks: list[ParallelTask], result: PerformInParallel.Result) -> tuple[bool, bool]:
         """Retrieves results of the tasks and fills the PerformInParallel.Result message.
 
         :param subtasks: Reference to the list of tasks to get results from.
@@ -245,12 +245,12 @@ class ParallelTaskExecutor(SystemTask):
         return any_done, any_failed
 
     def _set_results_for_unstarted_tasks(
-        self, requested_tasks: List[SubtaskResult], result: PerformInParallel.Result
+        self, requested_tasks: list[SubtaskResult], result: PerformInParallel.Result
     ) -> bool:
         """Sets results for tasks that were not started and fills the PerformInParallel.Result message.
 
-        Len(result.results) tasks have started, which means the next one has failed and will be set to ERROR.
-        The rest did not have a chance to get started and will be set to CANCELED and skipped.
+        Len(result.results) tasks have started, which means the next one has failed and will be set to ERROR. The rest
+        did not have a chance to get started and will be set to CANCELED and skipped.
 
         :param requested_tasks: Reference to the list of requested tasks from the original goal request.
         :param result: Reference to the PerformInParallel.Result message to fill with results.

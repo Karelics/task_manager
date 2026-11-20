@@ -33,8 +33,8 @@ def create_fib_action_server(node: Node, action_name: str) -> ActionServer:
 
     Aborts the goal if the order is less than 0.
 
-    If the given order is greater than 50, the action server will take 3 seconds to cancel.
-    This is to simulate a slow canceling action server.
+    If the given order is greater than 50, the action server will take 3 seconds to cancel. This is to simulate a slow
+    canceling action server.
     """
     return ActionServer(
         node=node,

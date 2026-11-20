@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 # ROS
 from rclpy.action.server import ActionServer, CancelResponse, ServerGoalHandle
