@@ -19,7 +19,7 @@ repos:
     rev: v3.21.2
     hooks:
       - id: pyupgrade
-        args: ["--py310-plus", "--keep-runtime-typing"]
+        args: ["--py310-plus"]
         language_version: python3.10
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
