@@ -15,8 +15,9 @@
 #  ------------------------------------------------------------------
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from multiprocessing import Event
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 # ROS
 from rclpy import Future
@@ -82,7 +83,7 @@ class ActionTaskClient(TaskClient):
         node: Node,
         task_details: TaskDetails,
         task_specs: TaskSpecs,
-        action_clients: Dict[str, ActionClient],
+        action_clients: dict[str, ActionClient],
     ):
         """
         :param node: ROS node
@@ -95,7 +96,7 @@ class ActionTaskClient(TaskClient):
         self._task_specs = task_specs
         self._goal_done = Event()
 
-        self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
+        self._task_done_callbacks: list[Callable[[TaskSpecs, TaskDetails], None]] = []
 
         # Use an existing action client or create a new one if this is the first time this action is called
         if task_specs.task_name not in action_clients:
@@ -105,8 +106,8 @@ class ActionTaskClient(TaskClient):
 
         self._client: ActionClient = action_clients[task_specs.task_name]
 
-        self._goal_handle: Optional[ClientGoalHandle] = None
-        self._result_future: Optional[Future] = None
+        self._goal_handle: ClientGoalHandle | None = None
+        self._result_future: Future | None = None
         self.server_wait_timeout = 10.0
 
     @property
@@ -171,8 +172,8 @@ class ActionTaskClient(TaskClient):
 
         This function waits till the task to finish or until the cancel timeout is reached.
 
-        :raises CancelTaskFailedError: If task does not finish (cancel) within the timeout or
-            a bad cancel response code is received.
+        :raises CancelTaskFailedError: If task does not finish (cancel) within the timeout or a bad cancel response code
+            is received.
         """
         if not self._goal_handle:
             raise CancelTaskFailedError("Couldn't cancel the task, goal handle does not exist!")
@@ -262,8 +263,9 @@ class ActionTaskClient(TaskClient):
                 raise CancelTaskFailedError("Couldn't cancel the task!")
 
     def _goal_done_cb(self, future: Future) -> None:
-        """Called when the Action Client's goal finishes. Updates the task status and invokes task done callbacks.
+        """Called when the Action Client's goal finishes.
 
+        Updates the task status and invokes task done callbacks.
         :param future: Future object giving the result of the action call.
         """
         if future.cancelled():
@@ -295,7 +297,7 @@ class ActionTaskClient(TaskClient):
         self.task_details.result = result.result
 
     @staticmethod
-    def _wait_for_future_to_complete(future: Future, timeout: Optional[float]) -> None:
+    def _wait_for_future_to_complete(future: Future, timeout: float | None) -> None:
         event = Event()
 
         def unblock(_):
@@ -323,7 +325,7 @@ class ServiceTaskClient(TaskClient):
         node: Node,
         task_details: TaskDetails,
         task_specs: TaskSpecs,
-        service_clients: Dict[str, Client],
+        service_clients: dict[str, Client],
     ):
         """
         :param node: ROS node
@@ -337,7 +339,7 @@ class ServiceTaskClient(TaskClient):
         self._service_clients = service_clients
         self._goal_done = Event()
 
-        self._task_done_callbacks: List[Callable[[TaskSpecs, TaskDetails], None]] = []
+        self._task_done_callbacks: list[Callable[[TaskSpecs, TaskDetails], None]] = []
 
         # # Use an existing service client or create a new one if this is the first time this service is called
         if task_specs.task_name not in self._service_clients:

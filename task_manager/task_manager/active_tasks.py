@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import threading
-from typing import Callable, Dict, List, Optional
+from collections.abc import Callable
 
 # Task Manager
 from task_manager.task_client import CancelTaskFailedError, TaskClient
@@ -30,15 +30,15 @@ class ActiveTasks:
     Active tasks updates automatically whenever Task Client finishes
     """
 
-    def __init__(self, active_tasks_changed_cb: Optional[Callable[[Dict[str, TaskClient]], None]] = None):
+    def __init__(self, active_tasks_changed_cb: Callable[[dict[str, TaskClient]], None] | None = None):
         self._active_tasks_changed_cb = active_tasks_changed_cb
 
         self._active_tasks_lock = threading.Lock()
-        self._active_tasks: Dict[str, TaskClient] = {}  # task_id -> TaskClient
+        self._active_tasks: dict[str, TaskClient] = {}  # task_id -> TaskClient
         with self._active_tasks_lock:
             self._active_tasks_changed()
 
-    def set_active_tasks_changed_cb(self, active_tasks_changed_cb: Callable[[Dict[str, TaskClient]], None]):
+    def set_active_tasks_changed_cb(self, active_tasks_changed_cb: Callable[[dict[str, TaskClient]], None]):
         """Sets the callback, which is called when active tasks list changes.
 
         The callback is being called instantly with the current state of the active tasks.
@@ -68,7 +68,7 @@ class ActiveTasks:
             self._active_tasks.clear()
             self._active_tasks_changed()
 
-    def get_active_tasks(self) -> List[TaskClient]:
+    def get_active_tasks(self) -> list[TaskClient]:
         """Return all the task clients that are currently active.
 
         :return: List of active TaskClients. Empty list if there are no active tasks
@@ -79,7 +79,7 @@ class ActiveTasks:
                 task_clients.append(task_client)
         return task_clients
 
-    def get_active_tasks_by_name(self, task_name: str) -> List[TaskClient]:
+    def get_active_tasks_by_name(self, task_name: str) -> list[TaskClient]:
         """Return all the task clients that exist with a given name.
 
         :param task_name: Name of the task to look for.
@@ -92,7 +92,7 @@ class ActiveTasks:
                     task_clients.append(task_client)
         return task_clients
 
-    def get_blocking_task(self) -> Optional[TaskClient]:
+    def get_blocking_task(self) -> TaskClient | None:
         """Gets the active blocking task client."""
         found_blocking_tasks = 0
         blocking_task = None

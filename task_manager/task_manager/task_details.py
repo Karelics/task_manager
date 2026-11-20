@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
@@ -42,4 +42,4 @@ class TaskDetails:
     status: TaskStatus
 
     # Other public fields (not constructor args)
-    result: Optional[Any] = field(default=None, init=False)
+    result: Any | None = field(default=None, init=False)

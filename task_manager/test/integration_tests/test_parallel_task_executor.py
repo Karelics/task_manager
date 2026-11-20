@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 import json
 import time
-from typing import Any, Dict
+from typing import Any
 
 # Thirdparty
 from task_manager_test_utils import TaskManagerTestNode
@@ -302,10 +302,10 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         self.assertEqual(result.result.task_status, TaskStatus.DONE)
 
     @staticmethod
-    def parse_task_results(task_results: str) -> Dict[str, Dict[str, Any]]:
+    def parse_task_results(task_results: str) -> dict[str, dict[str, Any]]:
         """Parse the task results from a JSON string to a dictionary with task_id as key and the result as value."""
         parsed_result = json.loads(task_results)
-        results: Dict[str, Dict[str, Any]] = {}
+        results: dict[str, dict[str, Any]] = {}
         for result in parsed_result["results"]:
             results[result["task_id"]] = result
         print(f"Parsed task results: {results}")
