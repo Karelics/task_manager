@@ -314,14 +314,16 @@ status-changed callback so that the late pause completes as a pause. It is not m
 `_PauseState` further. Worth reviewing, but see L1: a state machine makes this a normal transition (`PAUSING` to
 `PAUSED` when the goal ends, whenever that is).
 
-*Decision (<<decisions,D9>>).* A pause that times out is a failed pause: it is reported as a failure and the related
-tasks are stopped (an attempt is made, and each task reports its own result). So the task being cancelled is now the
-specified outcome. What stays a bug is that nothing says so: today the cancel is silent, the operator is told only that
-the pause failed, and the Mission aborts without a cause. The L1 state machine (`PAUSING` to `CANCELLING`) makes this
-an explicit, reported transition.
+*Decision (<<decisions,D9>>).* A pause that times out is a failed pause: it is reported as a failure and the task
+itself ends `ERROR`. The aim is that everything ends up in a finished state, as a best-effort attempt. A pause that
+fails this way almost always means a badly implemented task, for example one stuck in a loop that never honors a
+cancel. We can report that task as `ERROR`, but we can not repair it. What stays a bug is that today the outcome is
+wrong and silent: the operator is told "pause failed" while the task is then cancelled and removed as a genuine
+`CANCELED`, and the enclosing Mission aborts without a cause. The L1 state machine makes this an explicit transition
+(`PAUSING` to `ERROR`).
 
-*Test.* Mock server that takes 1.5 x `cancel_timeout` to cancel; assert the pause is reported as failed and the stop of
-the related tasks is attempted and reported, not silent.
+*Test.* Mock server that takes 1.5 x `cancel_timeout` to cancel; assert the pause is reported as failed and the task
+ends `ERROR`, not `CANCELED`.
 
 === B7. A failed pause leaves composites flagged as paused
 
@@ -332,9 +334,13 @@ the related tasks is attempted and reported, not silent.
 running. The Mission will also stop at its next subtask boundary. Response and state disagree. README documents
 "best-effort, succeeded parts are not rolled back", but not that the composite state stays paused on failure.
 
-*Fix.* *Decision (<<decisions,D9>>):* if a pause or resume fails, the failure is reported and an attempt is made to
-stop the related tasks. There is no rollback. The tasks report their own results on `/task_manager/results`. So the
-armed flags can not outlive a failed pause: a failure ends the group instead of leaving it half paused.
+*Fix.* *Decision (<<decisions,D9>>):* if a pause or resume fails for a task, the failure is reported and that task
+returns `ERROR`. There is no rollback. Everything should end up in a finished state as a best-effort attempt, and the
+usual cause of a failure is a faulty task that can not be cancelled, which we can only report. The task reports its
+result itself on `/task_manager/results`, and its composite reacts to it as to any child that ended in error. The
+armed flags must
+follow from that outcome (a composite whose child ended `ERROR` is not left shown as paused), which L2 gives by
+construction.
 
 === B8. A new `perform_in_parallel` preempts a paused one
 
@@ -358,8 +364,8 @@ aborts on cancel has the same effect. The behaviour is documented, but the asymm
 should never be able to destroy the mission.
 
 *Fix.* The earlier idea (a failed AtomicSequence pause leaves it running, as for a plain leaf) is *superseded by
-<<decisions,D9>>*: a failed pause is reported and the related tasks are stopped, so the sequence and its Mission may
-end. That is now accepted behavior, and the real fix is that it is reported and explicit. The L1 state machine is still
+<<decisions,D9>>*: a failed pause is reported and the sequence returns `ERROR`, so its Mission may end. That is now
+accepted behavior, and the real fix is that it is reported and explicit. The L1 state machine is still
 needed so that the sequence's client can tell "ended because of the pause" from "ended on its own".
 
 === B10. Resume bypasses same-type conflict resolution, and unit subtask ids are not reserved
@@ -475,7 +481,7 @@ Make sure we have tests for all the TaskManager features.
 |B3 |Catch all expected exceptions in `_try_pause` / `_try_resume`; treat `KeyError` as finished; run sync and publish in `finally` |Low
 |B16 |`_finish_if_paused` honours `cancel_reported_as_success`; use `_merged_result()` in the cancelled-future branch; `threading.Event`; exact-match source check; response lists |Low
 |B11 |In the pause branch, handle `GOAL_TERMINATED` as "wait for result" |Low
-|B7 |On a failed pause, report failure and stop (cancel) the group instead of leaving flags armed (D9) |Low
+|B7 |On a failed pause, report failure and return `ERROR` for the task; do not leave composite flags armed (D9) |Low
 |B5 |Pause leaves in two phases (request all cancels, then wait) and put service-backed leaves last |Medium
 |B8 |Exempt paused goals from preemption, or remove preemption |Low-Medium
 |B12 |Do not treat a composite as a leaf when it has no active children; wait for or ignore it instead |Medium
@@ -558,7 +564,7 @@ composite), the stale-id dictionaries, and the `composites` / `units` registries
 `composite_resolution.py` and `composite_pause_tracker.py` would go. Fixes B4, B7, B12, B13, B15 by construction.
 
 *Constraints from decisions.* Pausing or resuming by the id of a single child must keep working (D11): the service
-resolves the id upward through `parent_id` to the root. A pause or resume that fails stops the tasks involved (D9).
+resolves the id upward through `parent_id` to the root. A pause or resume that fails returns `ERROR` for that task and does nothing else (D9).
 One pauser only (D4), so a composite's paused state is a boolean.
 
 *Costs.* Larger rewrite of Mission, Parallel and AtomicSequence; new tests for the composite protocol; behaviour of
@@ -622,14 +628,12 @@ last column.
 |D6 |Architecture |*L2.* Resume in place stays. L3-c is dropped. |L2, Recommendation
 |D7 |Resume while a same-type or blocking task runs |*Cancel the running task*, as for a start. |B10
 |D8 |A new `perform_in_parallel` preempts a paused one |*A bug, to be fixed.* |B8
-|D9 |A pause or resume partly fails |*Report the failure and attempt to stop the related tasks.* No rollback. Tasks report their own results. Applies to timed-out pauses (B6) and AtomicSequence pauses (B9). |B6, B7, B9
+|D9 |A pause or resume partly fails |*Report the failure and return `ERROR` for the particular task.* No rollback. Everything should end up finished (best effort). The usual cause is a faulty task stuck in a loop that can not be cancelled, which we can only report. The task reports its own result. Applies to timed-out pauses (B6) and AtomicSequence pauses (B9). |B6, B7, B9
 |D10 |README |*Redo the pausing section* from these decisions. |Phase 4
 |D11 |Client compatibility |*Yes, clients rely on pausing and resuming by a single child id.* |L2
 |===
 
 .Points still open
-* *D9, owner:* TBD. Which component attempts the stop of the related tasks after a failed pause or resume: the service,
-  the composite, or the controller (see `task_controller.adoc`, TC8).
 * *D5, owner:* TBD. Where the rule "reject pausing a service-backed task on its own, allow it inside a composite" lives
   (see `task_controller.adoc`, TC7).
 * *D5, composites:* the README must state for each composite (Mission, `perform_in_parallel`, AtomicSequence) whether a

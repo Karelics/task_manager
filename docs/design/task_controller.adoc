@@ -11,7 +11,7 @@ proposes a `TaskController` that owns those operations and the rules for them, a
 registry. It expands the "`ActiveTasks` has too many responsibilities" section, L0 and L1 of
 link:pausing_review.adoc[the pausing review]. Bug ids (B1, B2, ...) refer to that document.
 
-*Status:* design agreed on TC1 to TC6 under <<decisions,Decisions>>. TC7 and TC8 are still open. Nothing here is
+*Status:* design agreed on TC1 to TC6 and TC8 under <<decisions,Decisions>>. TC7 is still open. Nothing here is
 implemented. Facts about the current code were checked against `feat/pausing` (`2a5d28f`). Paths are relative to
 `task_manager/task_manager/`.
 
@@ -275,7 +275,7 @@ RESUMING --> CANCELLING : cancel()
 PAUSED --> FINISHED : cancel() (no goal to stop)
 CANCELLING --> FINISHED : goal ended
 RUNNING --> FINISHED : goal ended on its own
-PAUSING --> CANCELLING : pause failed or timed out\n(stop is attempted, D9)
+PAUSING --> FINISHED : pause failed or timed out\n(task ends ERROR, D9)
 FINISHED --> [*]
 @enduml
 ----
@@ -285,7 +285,7 @@ FINISHED --> [*]
 |===
 |Operation |RUNNING |PAUSING |PAUSED |RESUMING |CANCELLING |FINISHED
 
-|`pause` |Start pausing |Join the pause in flight, same result (a failed pause moves the task to `CANCELLING`, D9) |Success, no change (keeps first `paused_by`, D4) |Wait for the resume, then pause |Fail: being cancelled |`KeyError`, the task is gone
+|`pause` |Start pausing |Join the pause in flight, same result (a failed or timed-out pause ends the task `ERROR`, D9) |Success, no change (keeps first `paused_by`, D4) |Wait for the resume, then pause |Fail: being cancelled |`KeyError`, the task is gone
 |`resume` |No-op success |Wait for the pause to settle, then resume (this is the lost-resume of B2) |Start resuming |Join the resume in flight |Fail: being cancelled |`KeyError`
 |`cancel` |Start cancelling |*Cancel wins* (TC3): stop waiting for the pause, cancel the goal |Finish as `CANCELED` directly |Cancel the new goal once it has a handle (B14) |Join, same result |No-op success (already gone)
 |===
@@ -503,5 +503,5 @@ L3-c was dropped by the team (D6) and is not planned for.
 |TC5 |Does stop also cancel `PAUSED` tasks? |*No.* Stop only stops running tasks. Explicit cancel still finishes a paused task |`cancel_on_stop` docstring, note under the outcome table, step 2
 |TC6 |Controller-level timeout on a whole operation? |*No.* Only the per-task `cancel_timeout` bounds waits |Design choices, lock-shape diagram
 |TC7 |Where does the rule live that pausing a service-backed task on its own is rejected but allowed inside a composite (D5 of the review)? |*TBD.* `TaskController.pause(id)` is also the per-leaf callback of a composite, so it can not tell the two cases apart. The rule belongs in the service or the resolution layer, or the call needs a flag saying "requested directly" |Not yet in the design
-|TC8 |Who attempts to stop the related tasks after a failed pause or resume (D9 of the review)? |*TBD.* Candidates: the service, the composite, or a `TaskController` operation. The state machine already has `PAUSING` to `CANCELLING` for the single-task case |Not yet in the design
+|TC8 |Who stops the related tasks after a failed pause or resume (D9 of the review)? |*No separate owner.* A failed pause or resume is reported and the task ends `ERROR`. The goal is that everything ends up finished (best effort). The usual cause is a faulty task stuck in a loop that can not be cancelled, which can only be reported. No rollback |State diagram, `pause` row
 |===
