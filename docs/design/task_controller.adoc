@@ -1,0 +1,507 @@
+= `TaskController`: one owner for cancel, pause, resume and stop
+:toc: left
+:toclevels: 2
+:sectnums:
+:source-highlighter: rouge
+
+[abstract]
+Design proposal. Today the operations that change what a running task is doing (cancel, pause, resume, stop) are
+spread over `ActiveTasks`, `TaskRegistrator` and the system services, and nothing serializes them. This document
+proposes a `TaskController` that owns those operations and the rules for them, and leaves `ActiveTasks` as a plain
+registry. It expands the "`ActiveTasks` has too many responsibilities" section, L0 and L1 of
+link:pausing_review.adoc[the pausing review]. Bug ids (B1, B2, ...) refer to that document.
+
+*Status:* design agreed on TC1 to TC6 and TC8 under <<decisions,Decisions>>. TC7 is still open. Nothing here is
+implemented. Facts about the current code were checked against `feat/pausing` (`2a5d28f`). Paths are relative to
+`task_manager/task_manager/`.
+
+== The problem
+
+=== Who changes a task today
+
+There are *four* places that cancel, pause or resume a task, and they do not share rules or a lock.
+
+[cols="2,3,3"]
+|===
+|Caller |What it does |Goes through
+
+|`CancelTasksService`, `StopTasksService` (`tasks/system_tasks.py`) |Cancel by id, cancel everything with `cancel_on_stop` |`ActiveTasks.cancel_task`, `cancel_tasks_on_stop`
+|`PauseTasksService`, `ResumeTasksService` (`tasks/system_tasks.py`) |Pause and resume, via `pause_or_resume_group` (`tasks/composite_resolution.py`) |`ActiveTasks.pause_task`, `resume_task`
+|`TaskRegistrator.start_new_task` (`task_registrator.py`) |Cancels a running task of the same type, and the active blocking task, before starting a new task |*Directly* on `TaskClient.cancel_task()`, not through `ActiveTasks`
+|`ParallelTask` (`tasks/parallel_task.py`) |Cancels its siblings when one finishes |*Directly* on `TaskClient.request_canceling()` (does not wait)
+|===
+
+=== Where the rules live
+
+[cols="2,3,2"]
+|===
+|Rule |Where it is implemented |Problem
+
+|At most one active blocking task |`TaskRegistrator._cancel_active_blocking_task` (start) and `ActiveTasks.resume_task` (resume) |Two copies, written differently
+|No two non-reentrant tasks of one type |`TaskRegistrator._cancel_task_of_same_type` (start only) |Not applied on resume (B10)
+|Do not cancel paused tasks as conflicts |`TaskRegistrator` and `ActiveTasks.get_blocking_task` |Each filters `PAUSED` on its own
+|Serialize start against other starts |`TaskManager.mutex` (`task_manager_node.py`, around `_start_task`) |Not shared with pause, resume or cancel (B2)
+|Publish `/task_manager/active_tasks` after a change |Callers call `publish_active_tasks()` by hand, `pause_task` and `resume_task` take a `publish` flag |Forgetting to publish is silent; an exception skips the publish (B3)
+|===
+
+=== The picture today
+
+.Today: control operations are spread over four callers
+[plantuml, task-controller-today, svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Entry points" {
+  [Cancel / Stop\nservices] as CancelSvc
+  [Pause / Resume\nservices] as PauseSvc
+  [TaskRegistrator\n(start_new_task)] as Reg
+  [ParallelTask\n(cancel_async)] as Par
+}
+
+[composite_resolution\n(pause_or_resume_group)] as Res
+
+package "ActiveTasks (5 jobs)" {
+  [registry +\nchange publishing] as Registry
+  [cancel / pause / resume\n/ stop] as Control
+  [blocking-conflict\nhandling in resume] as Conflict
+}
+
+[TaskClient\n(per task)] as Client
+
+CancelSvc --> Control
+PauseSvc --> Res
+Res --> Control : callback per leaf
+Control --> Conflict
+Control --> Client
+Reg --> Client : cancel_task()\n(bypasses ActiveTasks)
+Par --> Client : request_canceling()\n(bypasses ActiveTasks)
+Reg --> Registry : add, get_blocking_task
+Res --> Registry : lookups
+
+note bottom of Control
+  No lock. TaskManager.mutex only
+  covers task start.
+end note
+@enduml
+----
+
+=== What this costs
+
+* *No place for serialization.* The lock needed for B2 has no natural owner. `ActiveTasks` has its own lock, but it
+  only protects the dictionary.
+* *Rules are duplicated and drift.* B10 is exactly the drift between `TaskRegistrator` and `ActiveTasks.resume_task`.
+* *Exception handling is per caller.* `_try_resume` catches `ResumeTaskFailedError` only (B3); each caller invents its
+  own handling of `KeyError` and `CancelTaskFailedError`.
+* *Hard to test.* `test_active_tasks.py` tests the registry and the control methods together through mocks
+  (`test_cancel_task`, `test_pause_task`, `test_resume_task`, `test_cancel_tasks_on_stop` and their failure variants).
+
+== The proposal
+
+=== Target picture
+
+.Target: one controller, `ActiveTasks` is only a registry
+[plantuml, task-controller-target, svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Entry points (thin)" {
+  [Cancel / Stop\nservices] as CancelSvc
+  [Pause / Resume\nservices] as PauseSvc
+  [TaskRegistrator\n(start_new_task)] as Reg
+}
+
+[composite_resolution\n(until L2)] as Res
+
+package "TaskController (new)" {
+  [admission rules\n(blocking, same type)] as Admission
+  [cancel / pause /\nresume / stop] as Ops
+  [control lock] as Lock
+}
+
+package "ActiveTasks (slimmed)" {
+  [registry] as Registry
+  [change publishing] as Pub
+}
+
+[TaskClient\n(per task, state machine in L1)] as Client
+
+CancelSvc --> Ops
+PauseSvc --> Res
+Res --> Ops : callback per leaf
+Reg --> Admission : make_room_for(specs)
+Admission --> Ops
+Ops --> Lock
+Ops --> Client
+Ops --> Registry : lookups
+Ops --> Pub : publish once per batch
+Reg --> Registry : add
+@enduml
+----
+
+=== Who owns what
+
+[cols="3,2,2"]
+|===
+|Responsibility |Today |Target
+
+|Store clients, look up by id or name, `clear_all` |`ActiveTasks` |`ActiveTasks` (unchanged)
+|Remove a client when it finishes |`ActiveTasks` (done-callback) |`ActiveTasks` (unchanged)
+|Notify subscribers (active tasks topic) |`ActiveTasks` |`ActiveTasks` (unchanged), triggered by the controller
+|`get_blocking_task()` query |`ActiveTasks` |`ActiveTasks` (a query, no side effects)
+|`cancel_task`, `cancel_tasks_on_stop` |`ActiveTasks` |`TaskController`
+|`pause_task`, `resume_task` |`ActiveTasks` |`TaskController`
+|Blocking and same-type conflict resolution |`TaskRegistrator` (start), `ActiveTasks.resume_task` (resume) |`TaskController.make_room_for`, used by both
+|Serializing control operations |nothing (`TaskManager.mutex` for start only) |`TaskController`
+|Error mapping (`KeyError`, `CancelTaskFailedError`, ...) |each caller |`TaskController` raises a small, fixed set of errors
+|Resolving a task id to its group or leaves |`composite_resolution` |`composite_resolution` for now; parent links in L2
+|Starting a task (building the client, sending the goal) |`TaskRegistrator` |`TaskRegistrator` (calls `make_room_for` first)
+|===
+
+What `ActiveTasks` loses: four methods, the `CancelTaskFailedError` import, and the blocking handling in
+`resume_task`. It goes from 206 lines to roughly 140 and has one reason to change.
+
+=== Proposed interface
+
+[source,python]
+----
+class TaskController:
+    """Owns every operation that changes what a task is doing. The only code that calls
+    TaskClient.cancel_task / pause_task / resume_task from outside a composite's own children."""
+
+    def __init__(self, active_tasks: ActiveTasks, logger) -> None: ...
+
+    # --- operations on one task ------------------------------------------------------------------
+    def cancel(self, task_id: str) -> None:
+        """:raises KeyError: unknown task. :raises CancelTaskFailedError: did not stop in time."""
+
+    def pause(self, task_id: str, paused_by: Optional[str] = None) -> None:
+        """:raises KeyError: unknown task. :raises PauseTaskFailedError: not paused."""
+
+    def resume(self, task_id: str) -> None:
+        """Makes room first (same rules as a start): a conflicting running task is cancelled, the
+        resume never refuses because of it (TC4). :raises KeyError, ResumeTaskFailedError,
+        TaskStartError: a conflicting task could not be cancelled."""
+
+    # --- operations on many tasks ----------------------------------------------------------------
+    def cancel_on_stop(self) -> None:
+        """Cancels every running task with cancel_on_stop. Paused tasks are left alone (TC5). Tries
+        all, then raises one CancelTaskFailedError."""
+
+    def batch(self):
+        """Context manager. Defers the active-tasks publish to the end of the with-block, in a
+        finally clause, so a failing leaf can never skip it (B3)."""
+
+    # --- admission (used by TaskRegistrator and by resume) ---------------------------------------
+    def make_room_for(self, specs: TaskSpecs, task_id: str) -> None:
+        """Cancels the tasks that must not run next to a task with these specs. Paused tasks are
+        never conflicts. :raises TaskStartError: a conflicting task could not be cancelled."""
+----
+
+Design choices in this interface:
+
+* *It takes ids, not clients.* Callers never hold a `TaskClient` reference across a call, so the controller can
+  re-look it up under its lock and see current state.
+* *The error set is closed*: `KeyError` (unknown id), the three `*FailedError`s and `TaskStartError`. The services map
+  them to a response; nothing else may escape. This is the structural fix for B3.
+* *`publish` and `paused_by` stop being parameters threaded through the call chain.* The `publish` flag of
+  `pause_task` and `resume_task` disappears; `batch()` replaces it.
+* *No controller-level timeout* (TC6). Every wait is bounded by the `cancel_timeout` of the task being waited for, as
+  today. The controller adds no overall deadline for a request. A group pause is still the sum of its leaves until B5
+  is fixed (two-phase pause, or L3-b); that is where it gets addressed, not here.
+* *The controller is injected* (TC1). `TaskManager.__init__` builds one `TaskController` (in `task_controller.py`) and
+  passes it to the four services and to `TaskRegistrator`. Nothing reaches for it globally, and tests construct it with
+  a fake `ActiveTasks`.
+* *The controller does not resolve groups.* `pause_or_resume_group` keeps resolving a pause request to leaves and calls
+  `controller.pause` per leaf, exactly as it calls `_try_pause` today. This keeps step 1 a pure move.
+
+=== One request after the change
+
+.Pause request, after the refactor
+[plantuml, task-controller-pause-flow, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+actor Operator
+participant "PauseTasksService" as Svc
+participant "composite_resolution" as Res
+participant TaskController as Ctl
+participant ActiveTasks as AT
+participant "TaskClient" as Cli
+
+Operator -> Svc : pause([id])
+Svc -> Ctl : batch()
+activate Ctl
+Svc -> Res : pause_or_resume_group(id, callback=controller.pause)
+Res -> AT : lookups (which leaves?)
+loop each leaf
+  Res -> Ctl : pause(leaf_id, paused_by)
+  Ctl -> AT : get_task_client(leaf_id)
+  Ctl -> Cli : pause_task(paused_by)
+  Cli --> Ctl : ok / PauseTaskFailedError
+  Ctl --> Res : ok / PauseTaskFailedError
+end
+Res --> Svc : success: bool
+Svc -> Ctl : end batch
+Ctl -> AT : publish (once, in finally)
+deactivate Ctl
+Svc --> Operator : successful_pauses
+@enduml
+----
+
+== What a control operation means in each state
+
+This is the part that has to be agreed on before the lock design makes sense. It needs the explicit client state
+(`TaskClient` in L1: `RUNNING`, `PAUSING`, `PAUSED`, `RESUMING`, `CANCELLING`, finished). Until the client has that state,
+the controller can only approximate the table from `task_details.status` and the `pausing`/`paused` flags.
+
+.Client states the controller reasons about
+[plantuml, task-controller-states, svg]
+----
+@startuml
+skinparam shadowing false
+[*] --> RUNNING : start
+RUNNING --> PAUSING : pause()
+PAUSING --> PAUSED : goal ended after the pause-cancel\n(any result: D1, D3)
+PAUSED --> RESUMING : resume()
+RESUMING --> RUNNING : new goal accepted
+RUNNING --> CANCELLING : cancel()
+PAUSING --> CANCELLING : cancel()
+RESUMING --> CANCELLING : cancel()
+PAUSED --> FINISHED : cancel() (no goal to stop)
+CANCELLING --> FINISHED : goal ended
+RUNNING --> FINISHED : goal ended on its own
+PAUSING --> FINISHED : pause failed or timed out\n(task ends ERROR, D9)
+FINISHED --> [*]
+@enduml
+----
+
+.Outcome of each operation by state (agreed, TC3: cancel wins)
+[cols="1,2,2,2,2,2,2"]
+|===
+|Operation |RUNNING |PAUSING |PAUSED |RESUMING |CANCELLING |FINISHED
+
+|`pause` |Start pausing |Join the pause in flight, same result (a failed or timed-out pause ends the task `ERROR`, D9) |Success, no change (keeps first `paused_by`, D4) |Wait for the resume, then pause |Fail: being cancelled |`KeyError`, the task is gone
+|`resume` |No-op success |Wait for the pause to settle, then resume (this is the lost-resume of B2) |Start resuming |Join the resume in flight |Fail: being cancelled |`KeyError`
+|`cancel` |Start cancelling |*Cancel wins* (TC3): stop waiting for the pause, cancel the goal |Finish as `CANCELED` directly |Cancel the new goal once it has a handle (B14) |Join, same result |No-op success (already gone)
+|===
+
+The rule behind the table: *at most one control operation runs per task, a second caller either joins it or waits
+behind it, and cancel always wins* (TC3). Every cell is a single decision that a test can pin.
+
+*Stop is not the same as cancel* (TC5). An explicit `cancel` of a `PAUSED` task finishes it, as in the table. `stop` only
+touches running tasks: it skips `PAUSED` ones, so a stop does not destroy a paused task that can still be resumed.
+A task in `PAUSING` counts as running and is cancelled by stop (cancel wins).
+
+== Concurrency design
+
+=== The race the controller has to close
+
+Two requests that touch the same blocking task, today (B2, resume against start):
+
+.Today: resume and start both pass the check, two blocking tasks run
+[plantuml, task-controller-race-today, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+participant "Resume service\nthread" as R
+participant "Start thread\n(holds TaskManager.mutex)" as S
+participant ActiveTasks as AT
+
+R -> AT : get_blocking_task()
+AT --> R : none
+S -> AT : get_blocking_task()
+AT --> S : none
+S -> AT : add(blocking task X)
+R -> R : task_client.resume_task()\n(re-sends goal of paused Y, blocking)
+note over AT : X and Y are both blocking and active.\nget_blocking_task() now hits its assert.
+@enduml
+----
+
+The start side has a lock, the resume side does not, so the lock protects nothing.
+
+=== Three options
+
+[cols="1,3,3,3"]
+|===
+| |A. One lock held for the whole operation |B. Short decision lock, waits outside (recommended) |C. Per-task locks only
+
+|Idea |`with lock:` around cancel, pause, resume and start, including waiting for the goal to stop |Lock only protects "look at state, choose and record the transition". Waiting for the server happens after releasing, on a future or event |Each client serializes its own operations; no cross-task lock
+|Closes the race above |Yes |Yes, with a reservation (see below) |No, the race is between two different tasks
+|Slow cancel (`cancel_timeout`, 10 s) |Blocks every other control operation and every start |Blocks only the callers that need that task |Blocks only that task
+|Deadlock risk |*High*, see below |Low, if the rule "never wait while holding the lock" is enforced |Low
+|Effort |Smallest |Medium |Small, but incomplete
+|===
+
+*Recommendation: B for cross-task rules, with C's per-task serialization inside the client (that is the L1 state machine).*
+They are two layers: the controller's lock protects invariants between tasks (blocking, same-type), the client's state
+protects one task's own transitions.
+
+=== Why A is dangerous: composites need the lock too
+
+`TaskManager.mutex` already is option A for starts: it is held while `start_new_task` cancels the blocking task and
+waits for it. That works only because nothing the cancelled task does needs the mutex. A Mission or parallel task
+does: it starts its children by calling `execute_task` in process, which takes the same lock.
+
+.Possible deadlock if pause or cancel waits for a composite while holding the lock
+[plantuml, task-controller-deadlock, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+participant "Pause request\nthread" as P
+participant TaskController as Ctl
+participant "Mission thread" as M
+
+P -> Ctl : acquire lock
+activate Ctl
+P -> M : cancel goal, wait until it ends
+M -> Ctl : execute_task(next subtask)\n-> needs lock
+note over P, M : P waits for M to finish.\nM waits for P to release the lock.\nBroken only by cancel_timeout.
+@enduml
+----
+
+*Verify before relying on this:* the exact interleaving depends on when the Mission checks `is_cancel_requested`
+(`tasks/mission.py:77-93`), so the window may be narrow. It still argues for option B as a rule: *never wait for a
+task while holding the controller lock.*
+
+=== Option B in detail
+
+The lock protects a small critical section. Everything slow happens outside it.
+
+.Critical section vs. waiting
+[plantuml, task-controller-lock-shape, svg]
+----
+@startuml
+skinparam shadowing false
+start
+:acquire control lock;
+:look up clients, read their state;
+:decide: who conflicts, what transition;
+:record the transition (state, reservation);
+:send the cancel / pause requests\n(non-blocking);
+:release control lock;
+:wait for the goals to end\n(future / event, bounded by each\ntask's cancel_timeout);
+:acquire control lock;
+:finalize: update state, publish;
+:release control lock;
+stop
+@enduml
+----
+
+*Reservation for starts and resumes.* The race above exists because the new blocking task is not visible until its goal
+is sent. With option B the controller registers the task *before* it waits for conflicts:
+
+. Under the lock: find conflicting tasks (blocking, same type, ignoring paused ones), register the new task as `RECEIVED`
+  so that it already counts, mark the conflicts as cancelling.
+. Outside the lock: wait for the conflicts to stop.
+. Send the new goal.
+
+A resume does not register a new task, because the paused one is already in `ActiveTasks`. For a resume, the controller
+instead marks the task as `RESUMING` under the lock, so that it already counts as active (blocking, same type) before
+the conflicts have stopped.
+
+A third start arriving meanwhile sees the reserved task as the current blocking one and cancels it before its goal was
+ever sent, which is today's "latest request wins" rule. Registering before starting also removes one of the windows in
+B4 (a pause no longer misses a child that is still starting).
+
+== Migration plan
+
+Each step is its own merge request, keeps the suite green, and is useful on its own. Do not combine steps.
+
+.Steps and dependencies
+[plantuml, task-controller-steps, svg]
+----
+@startuml
+skinparam shadowing false
+skinparam defaultTextAlignment center
+rectangle "0. Repro tests\n(xfail)" as S0
+rectangle "1. Extract\nTaskController\n(pure move)" as S1
+rectangle "2. One conflict rule\nfor start and resume" as S2
+rectangle "3. Closed error set,\nbatch() publish" as S3
+rectangle "4. Control lock +\nreservation" as S4
+rectangle "5. Client state\nmachine (L1)" as S5
+rectangle "6. Parent links (L2)" as S6
+
+S0 --> S1
+S1 --> S2
+S1 --> S3
+S2 --> S4
+S3 --> S4
+S4 --> S5
+S5 --> S6
+@enduml
+----
+
+[cols="1,3,3,2,2"]
+|===
+|Step |Change |Tests |Bugs |Risk
+
+|*0. Repro tests* |Add the mock servers and `xfail` tests from Phase 0 of the review. Add a concurrency test for B2 (resume against start) with a repeat count |New, all `xfail` |none, makes later steps provable |None
+|*1. Extract* |New `task_controller.py`. Move `cancel_task`, `cancel_tasks_on_stop`, `pause_task`, `resume_task` unchanged. `TaskManager` builds one controller and passes it to the four services (`TaskRegistrator` receives it in step 2, when it starts to use it). `ActiveTasks` keeps registry, publish, `get_blocking_task`. `publish=` flags stay for now |Move the control tests from `test_active_tasks.py` to `test_task_controller.py`; services keep their tests with the controller mocked |none |Low
+|*2. One conflict rule* |`make_room_for(specs, task_id)`. `TaskRegistrator` calls it instead of its two `_cancel_*` methods; `resume` calls it too. Same-type handling now also applies on resume: a conflicting running task is cancelled (TC4, D7 of the review). Also here: `cancel_on_stop` skips `PAUSED` tasks (TC5), the only intended behavior change besides resume |Add tests for resume with a same-type or blocking task running, and for stop leaving a paused task alone (Appendix A of the review) |B10 |Low-Medium: changes resume and stop behavior
+|*3. Closed error set* |`controller` raises only `KeyError`, `CancelTaskFailedError`, `PauseTaskFailedError`, `ResumeTaskFailedError`, `TaskStartError`. Wrap unexpected exceptions. `batch()` publishes in `finally`; remove the `publish` flags. Services stop catching ad hoc exceptions |A leaf raising each error type; a raising leaf still publishes |B3 |Low
+|*4. Lock and reservation* |Control lock in the controller, option B. Register-before-start in `TaskRegistrator`. Remove `TaskManager.mutex` (TC2) and let the controller lock replace it. The guarantee the mutex gives today, that the previous blocking task has truly finished before the next one starts, must then come from `make_room_for` waiting for it. Enforce "never wait while holding the lock" with a test helper that fails if a wait is entered while locked |The B2 concurrency test from step 0 now passes; a deadlock test with a Mission (the Verify item above) |B2 (start/resume/cancel part), part of B4 |Medium: new locking, needs the deadlock test
+|*5. Client state machine* |L1 of the review: `ActionTaskClient` gets one state field. The controller reads it to apply the outcome table above |Full table, one test per cell |B2 (pause/cancel part), B6, B14, B9 partly |High: rewrites `task_client.py` internals
+|*6. Composite ownership* |L2 (parent links, composites own pause; D6). The controller's `pause` and `resume` then act on the tree root |See the review |B4, B7, B12, B13, B15 |High
+|===
+
+Steps 1 to 3 need no further decision and can start now. Steps 4 and 5 should not start before the
+transition table above is agreed.
+
+== Testing strategy
+
+* *Controller unit tests* use mocked `TaskClient`s (as `test_active_tasks.py` does today) and cover the decision logic:
+  which tasks conflict, which errors escape, that publish happens in `finally`.
+* *The transition table* (step 5) is one parametrized test: `(state, operation) -> outcome`, driven through a fake client
+  whose state can be set directly. This is where "join", "wait behind" and "cancel wins" are pinned.
+* *Concurrency tests* run two operations on separate threads with a repeat count and a deadline, against real
+  `ActionTaskClient`s and the mock servers (`integration_tests/mock_servers.py`). They assert the *invariants*: at most
+  one blocking task, no exception escapes, the final state is one of the legal outcomes.
+* *Lock discipline*: in tests, wrap the lock so that entering a wait (future or event) while it is held raises.
+
+== Relation to the other refactoring levels
+
+[cols="1,3"]
+|===
+|Level |Effect on `TaskController`
+
+|L0 |Step 1 is the `ActiveTasks` extraction listed under L0. It is the prerequisite for everything else.
+|L1 |Steps 4 and 5. The controller supplies the cross-task lock; the client supplies the per-task state machine.
+|L2 |Composites implement `pause()` and `resume()`; `TaskController.pause(id)` follows `parent_id` to the root and delegates.
+The resolution helpers in `composite_resolution.py` disappear; the controller's public interface does not change.
+|===
+
+The interface in this document was chosen so that L2 does not force a change to the services or to `TaskRegistrator`.
+L3-c was dropped by the team (D6) and is not planned for.
+
+== Non-goals
+
+* *B1* (a server that succeeds or aborts on cancel) is a client problem: how a goal result is classified during a
+  pause. The controller cannot fix it. It benefits from the state machine in step 5.
+* *Starting tasks.* Building clients and sending goals stays in `TaskRegistrator`. Only the conflict rules move.
+* *Sibling cancels inside a parallel task* (`ParallelTask.cancel_async`) stay direct calls on the clients (`request_canceling()`, which does not wait). They are a
+  composite managing its own children and should not take the controller lock, to avoid the deadlock above. The client state
+  machine (step 5) makes them safe against concurrent pause or cancel from outside.
+* *Changing any ROS interface.* No message, service or action changes.
+
+== Decisions [[decisions]]
+
+[cols="1,3,3,3"]
+|===
+|# |Question |Decision |Where it shows up
+
+|TC1 |Name, location, and how it is wired |*`TaskController`* in `task_controller.py`, *injected* from `TaskManager.__init__`. Not a method set on `TaskRegistrator` |Interface section, step 1
+|TC2 |Keep `TaskManager.mutex` once the controller lock exists? |*Remove it.* One lock, no lock order to document |Step 4
+|TC3 |Does cancel win over a pause or resume in flight? |*Yes, cancel wins* |Outcome table, `cancel` row
+|TC4 |On resume with a conflicting running task: cancel it or refuse? |*Cancel it*, as a start does (also D7 of the review) |`resume` docstring, step 2
+|TC5 |Does stop also cancel `PAUSED` tasks? |*No.* Stop only stops running tasks. Explicit cancel still finishes a paused task |`cancel_on_stop` docstring, note under the outcome table, step 2
+|TC6 |Controller-level timeout on a whole operation? |*No.* Only the per-task `cancel_timeout` bounds waits |Design choices, lock-shape diagram
+|TC7 |Where does the rule live that pausing a service-backed task on its own is rejected but allowed inside a composite (D5 of the review)? |*TBD.* `TaskController.pause(id)` is also the per-leaf callback of a composite, so it can not tell the two cases apart. The rule belongs in the service or the resolution layer, or the call needs a flag saying "requested directly" |Not yet in the design
+|TC8 |Who stops the related tasks after a failed pause or resume (D9 of the review)? |*No separate owner.* A failed pause or resume is reported and the task ends `ERROR`. The goal is that everything ends up finished (best effort). The usual cause is a faulty task stuck in a loop that can not be cancelled, which can only be reported. No rollback |State diagram, `pause` row
+|===
