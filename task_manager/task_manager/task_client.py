@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from multiprocessing import Event
 from typing import Any
@@ -354,12 +355,12 @@ class ActionTaskClient(TaskClient):
         """Pauses the task by cancelling the underlying action goal, keeping the original goal message stored so that
         resume_task() can restart it later.
 
-        The task's entry stays in ActiveTasks the whole time; no "task done" callbacks are fired. The partial
-        result the server returns when the goal is cancelled is kept, and any fields listed in
-        `task_specs.result_concat_fields` are concatenated into the task's final result once it truly finishes.
+        The task's entry stays in ActiveTasks the whole time; no "task done" callbacks are fired. The partial result the
+        server returns when the goal is cancelled is kept, and any fields listed in `task_specs.result_concat_fields`
+        are concatenated into the task's final result once it truly finishes.
 
-        If the goal completes successfully on its own before the cancel takes effect, the pause is considered
-        successful even though the task ended up DONE rather than PAUSED, the same as for service-backed tasks.
+        If the goal completes successfully on its own before the cancel takes effect, the pause is considered successful
+        even though the task ended up DONE rather than PAUSED, the same as for service-backed tasks.
 
         :raises PauseTaskFailedError: If the task is already paused/finished, finishes unsuccessfully on its own while
             being paused, or the cancel fails/times out.

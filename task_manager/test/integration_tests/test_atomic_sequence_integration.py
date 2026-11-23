@@ -376,7 +376,7 @@ class AtomicSequenceTests(TaskManagerTestNode):
         self._wait_until(lambda: "svc1" not in self._active_clients())  # Let the service call finish before teardown
 
     def test_stop_while_paused(self):
-        """system/stop while an atomic sequence is paused cancels it and its mission, leaving nothing active."""
+        """System/stop while an atomic sequence is paused cancels it and its mission, leaving nothing active."""
         mission_handle = self._start_mission(self._two_pair_mission())
         self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
         self.execute_pause_task([self._mission_id()])

@@ -23,8 +23,7 @@ their (possibly deeply nested) children up to the outermost such unit.
 """
 
 import json
-from collections.abc import Callable, Iterator
-from typing import Collection
+from collections.abc import Callable, Collection, Iterator
 
 # Thirdparty
 from rosbridge_library.internal.message_conversion import extract_values

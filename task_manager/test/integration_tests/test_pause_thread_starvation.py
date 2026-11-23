@@ -16,7 +16,6 @@
 
 import json
 import unittest
-from typing import List
 
 # ROS
 from rclpy.action.client import ClientGoalHandle
@@ -51,7 +50,7 @@ class PauseThreadStarvationTests(TaskManagerTestNode):
         """Like goal_handle.get_result(), but fails the test instead of blocking forever."""
         return self._get_response(goal_handle.get_result_async(), timeout=self.REQUEST_TIMEOUT).result
 
-    def _pause_with_timeout(self, task_ids: List[str]) -> ExecuteTask.Result:
+    def _pause_with_timeout(self, task_ids: list[str]) -> ExecuteTask.Result:
         """Like execute_pause_task(), but fails the test instead of blocking forever if the pause hangs."""
         pause_goal = ExecuteTask.Goal(
             task_name="system/pause_task", task_data=json.dumps({"paused_tasks": task_ids}), source=""

@@ -15,8 +15,6 @@
 #  ------------------------------------------------------------------
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import Protocol
 
 # ROS
 import rclpy

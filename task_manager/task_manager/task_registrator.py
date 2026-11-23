@@ -214,8 +214,10 @@ def populate_msg(task_data: str, msg_interface: Any):
 
 
 def populate_message_from_json(data: dict[str, Any], message_instance: Any) -> Any:
-    """Populates ROS message with given data. Data may contain extra fields which are simply ignored. Has same interface
-    as populate_instance from rosbridge_library.
+    """Populates ROS message with given data.
+
+    Data may contain extra fields which are simply ignored.
+    Has same interface as populate_instance from rosbridge_library.
 
     :param data: a dictionary of the input data
     :param message_instance: Instance of the wanted message type

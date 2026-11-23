@@ -17,7 +17,8 @@
 
 import functools
 import threading
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 # ROS
 from rclpy.task import Future
@@ -26,9 +27,9 @@ from rclpy.task import Future
 def run_in_own_thread(callback: Callable[..., Any]) -> Callable[..., Awaitable[Any]]:
     """Wraps a long running blocking callback to run in a new thread of its own, outside of the executor's thread pool.
 
-    The returned coroutine function starts the callback in a new thread and awaits an rclpy Future. The
-     execute thread is handed back to the executor while the callback runs. When the callback returns or raises,
-     the thread completes the Future, which makes the executor resume the execution by handling the finished Future.
+    The returned coroutine function starts the callback in a new thread and awaits an rclpy Future. The  execute thread
+    is handed back to the executor while the callback runs. When the callback returns or raises,  the thread completes
+    the Future, which makes the executor resume the execution by handling the finished Future.
 
     :param callback: Blocking callback to wrap
     :return: Coroutine function taking the same arguments as the callback, returning its result
