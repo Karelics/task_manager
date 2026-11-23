@@ -15,7 +15,8 @@
 #  ------------------------------------------------------------------
 
 import json
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 # ROS
 from rclpy.action import ActionClient
@@ -59,7 +60,7 @@ class TaskRegistrator:
         self,
         node: Node,
         active_tasks: ActiveTasks,
-        task_done_cb: Optional[Callable[["TaskSpecs", "TaskDetails"], None]] = None,
+        task_done_cb: Callable[["TaskSpecs", "TaskDetails"], None] | None = None,
     ):
         """
         :param node: parent ROS node
@@ -73,8 +74,8 @@ class TaskRegistrator:
         # Action and service clients for each task, which can be reused for TaskClient. At the time of writing,
         # rclpy's .destroy() isn't safe for action clients and servers, which is why we want to
         # reuse the clients
-        self._action_clients: Dict[str, ActionClient] = {}  # [task_name, ActionClient]
-        self._service_clients: Dict[str, Client] = {}  # [task_name, Client]
+        self._action_clients: dict[str, ActionClient] = {}  # [task_name, ActionClient]
+        self._service_clients: dict[str, Client] = {}  # [task_name, Client]
 
     def start_new_task(self, request: ExecuteTask.Goal, task_specs: TaskSpecs) -> TaskClient:
         """Starts a task and cancels any conflicting tasks.
@@ -195,9 +196,11 @@ def populate_msg(task_data: str, msg_interface: Any):
     return task_goal_message
 
 
-def populate_message_from_json(data: Dict[str, Any], message_instance: Any) -> Any:
-    """Populates ros message with given data. Data may contain extra fields which are simply ignored. Has same interface
-    as populate_instance from rosbridge_library.
+def populate_message_from_json(data: dict[str, Any], message_instance: Any) -> Any:
+    """Populates ros message with given data.
+
+    Data may contain extra fields which are simply ignored. Has same interface as populate_instance from
+    rosbridge_library.
 
     :param data: a dictionary of the input data
     :param message_instance: Instance of the wanted message type

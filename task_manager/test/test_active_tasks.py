@@ -15,7 +15,7 @@
 #  ------------------------------------------------------------------
 
 import unittest
-from typing import Callable, Dict
+from collections.abc import Callable
 from unittest.mock import Mock
 
 # Task Manager messages
@@ -80,7 +80,7 @@ class TestActiveTasks(unittest.TestCase):
             status=TaskStatus.IN_PROGRESS,
         )
 
-        self.changed_cb = Mock(spec=Callable[[Dict[str, TaskClient]], None])
+        self.changed_cb = Mock(spec=Callable[[dict[str, TaskClient]], None])
         self.active_tasks = ActiveTasks(self.changed_cb)
         self.active_tasks._active_tasks = {
             self.cli_1.task_details.task_id: self.cli_1,
