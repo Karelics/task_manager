@@ -30,55 +30,28 @@ from task_manager.task_specs import TaskSpecs
 # pylint: disable=protected-access
 
 
+def make_client(index: int, blocking: bool, cancel_on_stop: bool, status: str = TaskStatus.IN_PROGRESS) -> Mock:
+    """Mock TaskClient with real TaskSpecs and TaskDetails, named test_task_<index> with task id task_<index>."""
+    client = Mock(spec=TaskClient)
+    client.task_specs = TaskSpecs(
+        task_name=f"test_task_{index}",
+        topic=Mock(),
+        msg_interface=Mock(),
+        task_server_type=Mock(),
+        blocking=blocking,
+        cancel_on_stop=cancel_on_stop,
+    )
+    client.task_details = TaskDetails(task_id=f"task_{index}", source="CLOUD", status=status)
+    return client
+
+
 class TestActiveTasks(unittest.TestCase):
     """Unit tests for ActiveTasks."""
 
     def setUp(self) -> None:
-        self.cli_1 = Mock(spec=TaskClient)
-        self.cli_1.task_specs = TaskSpecs(
-            task_name="test_task_1",
-            topic=Mock(),
-            msg_interface=Mock(),
-            task_server_type=Mock(),
-            blocking=False,
-            cancel_on_stop=True,
-        )
-        self.cli_1.task_details = TaskDetails(
-            task_id="task_1",
-            source="CLOUD",
-            status=TaskStatus.IN_PROGRESS,
-        )
-
-        self.cli_2 = Mock(spec=TaskClient)
-
-        self.cli_2.task_specs = TaskSpecs(
-            task_name="test_task_2",
-            topic=Mock(),
-            msg_interface=Mock(),
-            task_server_type=Mock(),
-            blocking=True,
-            cancel_on_stop=True,
-        )
-        self.cli_2.task_details = TaskDetails(
-            task_id="task_2",
-            source="CLOUD",
-            status=TaskStatus.IN_PROGRESS,
-        )
-
-        self.cli_3 = Mock(spec=TaskClient)
-        self.cli_3.task_specs = TaskSpecs(
-            task_name="test_task_3",
-            topic=Mock(),
-            msg_interface=Mock(),
-            task_server_type=Mock(),
-            blocking=False,
-            cancel_on_stop=False,
-        )
-        self.cli_3.task_details = TaskDetails(
-            task_id="task_3",
-            source="CLOUD",
-            status=TaskStatus.IN_PROGRESS,
-        )
+        self.cli_1 = make_client(1, blocking=False, cancel_on_stop=True)
+        self.cli_2 = make_client(2, blocking=True, cancel_on_stop=True)
+        self.cli_3 = make_client(3, blocking=False, cancel_on_stop=False)
 
         self.changed_cb = Mock(spec=Callable[[dict[str, TaskClient]], None])
         self.active_tasks = ActiveTasks(self.changed_cb)
@@ -92,20 +65,7 @@ class TestActiveTasks(unittest.TestCase):
 
     def test_add(self):
         """Test add method."""
-        new_cli = Mock(spec=TaskClient)
-        new_cli.task_specs = TaskSpecs(
-            task_name="test_task_4",
-            topic=Mock(),
-            msg_interface=Mock(),
-            task_server_type=Mock(),
-            blocking=True,
-            cancel_on_stop=True,
-        )
-        new_cli.task_details = TaskDetails(
-            task_id="task_4",
-            source="CLOUD",
-            status=TaskStatus.RECEIVED,
-        )
+        new_cli = make_client(4, blocking=True, cancel_on_stop=True, status=TaskStatus.RECEIVED)
         self.active_tasks.add(new_cli)
 
         self.assertIn(new_cli, self.active_tasks._active_tasks.values())
