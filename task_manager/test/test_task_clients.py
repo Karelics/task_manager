@@ -260,48 +260,32 @@ class TestActionTaskClient(unittest.TestCase):
         self.assertEqual(len(task_client._pause_state.paused_results), 1)
         self.assertEqual(extract_values(task_client._pause_state.paused_results[0]), {"sequence": [0, 1, 1]})
 
-    def test_final_result_concatenates_paused_segments(self):
-        """Fields listed in result_concat_fields are concatenated across paused segments and the final segment, in
-        chronological order."""
-        task_client = get_concat_action_task_client(result_concat_fields=["sequence"])
-        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1]), Fibonacci.Result(sequence=[1, 2])]
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
-        )
+    def test_final_result_merges_paused_segments(self):
+        """The final result is the final segment, with the fields listed in result_concat_fields concatenated across the
+        paused segments and the final segment in chronological order.
 
-        task_client._goal_done_cb(goal_future)
+        Without concat fields the paused segments' results are discarded, and a configured field that can't be
+        concatenated is skipped without breaking the rest of the result.
+        """
+        cases = [
+            # (name, result_concat_fields, paused segments, final segment, expected sequence)
+            ("concatenates", ["sequence"], [[0, 1], [1, 2]], [3, 5], [0, 1, 1, 2, 3, 5]),
+            ("no_concat_fields_keeps_final_segment_only", [], [[0, 1]], [3, 5], [3, 5]),
+            ("bad_concat_field_is_skipped", ["no_such_field", "sequence"], [[0, 1]], [3, 5], [0, 1, 3, 5]),
+        ]
+        for name, concat_fields, paused_segments, final_segment, expected_sequence in cases:
+            with self.subTest(name):
+                task_client = get_concat_action_task_client(result_concat_fields=concat_fields)
+                task_client._pause_state.paused_results = [Fibonacci.Result(sequence=seq) for seq in paused_segments]
+                goal_future = Future(executor=Mock())
+                goal_future._result = Fibonacci.Impl.GetResultService.Response(
+                    status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=final_segment)
+                )
 
-        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
-        result = extract_values(task_client.task_details.result)
-        self.assertEqual(result, {"sequence": [0, 1, 1, 2, 3, 5]})
+                task_client._goal_done_cb(goal_future)
 
-    def test_final_result_without_concat_fields_keeps_final_segment_only(self):
-        """With no result_concat_fields configured, paused segments' results are discarded as before."""
-        task_client = get_concat_action_task_client(result_concat_fields=[])
-        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1])]
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
-        )
-
-        task_client._goal_done_cb(goal_future)
-
-        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [3, 5]})
-
-    def test_final_result_skips_bad_concat_field(self):
-        """A configured field that can't be concatenated is skipped without breaking the rest of the result."""
-        task_client = get_concat_action_task_client(result_concat_fields=["no_such_field", "sequence"])
-        task_client._pause_state.paused_results = [Fibonacci.Result(sequence=[0, 1])]
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[3, 5])
-        )
-
-        task_client._goal_done_cb(goal_future)
-
-        self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
-        self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [0, 1, 3, 5]})
+                self.assertEqual(task_client.task_details.status, TaskStatus.DONE)
+                self.assertEqual(extract_values(task_client.task_details.result), {"sequence": expected_sequence})
 
     def test_cancel_while_paused_reports_merged_paused_segments(self):
         """Cancelling a paused task must report the merged partial results instead of an empty Result."""
