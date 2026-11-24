@@ -151,6 +151,21 @@ class TaskManagerTestNode(unittest.TestCase):
         """Returns the current active tasks as a dictionary mapping task IDs to ActiveTask instances."""
         return self._current_active_tasks
 
+    def get_mission_id(self, exclude: tuple[str, ...] = ()) -> str:
+        """Returns the task id of a running system/mission, read from the active tasks topic.
+
+        Call it after wait_for_task_start() of one of the mission's subtasks, so that the mission has certainly been
+        published.
+
+        :param exclude: Task ids to skip, for tests with more than one mission.
+        :raises StopIteration: If no matching mission has been published.
+        """
+        return next(
+            task_id
+            for task_id, task in self.get_active_tasks().items()
+            if task.task_name == "system/mission" and task_id not in exclude
+        )
+
     def start_fibonacci_action_task(
         self, task_name: str = "fibonacci", run_time_secs: int = 3, task_id: str | None = None
     ) -> ClientGoalHandle:

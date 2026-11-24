@@ -107,9 +107,7 @@ class MissionTests(TaskManagerTestNode):
         self._get_response(future, timeout=5)
 
         self.wait_for_task_start("123")
-        mission_id = next(
-            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         pause_response = self.execute_pause_task([mission_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -143,9 +141,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status("123", TaskStatus.PAUSED)
@@ -195,9 +191,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status("456", TaskStatus.PAUSED)
@@ -247,9 +241,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         res = self.execute_pause_task([mission_id])
         print(res)
@@ -293,9 +285,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         pause_response = self.execute_pause_task([mission_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -334,9 +324,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         pause_response = self.execute_pause_task(["fib1"])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -400,11 +388,7 @@ class MissionTests(TaskManagerTestNode):
         active_tasks_by_id = {
             task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
         }
-        outer_mission_id = next(
-            task_id
-            for task_id, task in active_tasks_by_id.items()
-            if task.task_specs.task_name == "system/mission" and task_id != "inner_mission"
-        )
+        outer_mission_id = self.get_mission_id(exclude=("inner_mission",))
 
         # The outer mission must still be IN_PROGRESS, not aborted/cancelled by the inner mission's start.
         self.assertEqual(active_tasks_by_id[outer_mission_id].task_details.status, TaskStatus.IN_PROGRESS)
@@ -432,9 +416,7 @@ class MissionTests(TaskManagerTestNode):
         mission_goal_handle = self._get_response(future, timeout=5)
 
         self.wait_for_task_start("123")
-        mission_id = next(
-            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
-        )
+        mission_id = self.get_mission_id()
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
