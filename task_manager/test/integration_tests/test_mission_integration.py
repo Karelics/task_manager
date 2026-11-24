@@ -173,8 +173,8 @@ class MissionTests(TaskManagerTestNode):
     def test_pause_and_resume_mission_with_many_subtasks(self):
         """Make sure that the mission continues the execution from the correct step.
 
-        Let's the first task to succeed, then pauses the mission on the second task. Resume should then continue from
-        the second task and eventually complete the third task and the whole mission.
+        Lets the first task succeed, then pauses the mission on the second task. Resume should then continue from the
+        second task and eventually complete the third task and the whole mission.
         """
         mission_goal = Mission.Goal(
             subtasks=[
@@ -201,7 +201,6 @@ class MissionTests(TaskManagerTestNode):
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status("456", TaskStatus.PAUSED)
-        # self.wait_for_task_status("456", TaskStatus.DONE)  # The service task will complete when paused
         self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
 
         # Resuming any task related to the mission should resume the whole mission
