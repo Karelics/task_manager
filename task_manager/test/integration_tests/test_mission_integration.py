@@ -433,18 +433,13 @@ class MissionTests(TaskManagerTestNode):
         mission_goal_handle = self._get_response(future, timeout=5)
 
         self.wait_for_task_start("123")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
         mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
         )
 
         self.execute_pause_task([mission_id])
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
         self.wait_for_task_status("123", TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
-        # The not-yet-started subtask must stay untouched - it never even reached ActiveTasks
-        self.assertNotIn("456", self._tasks_started)
 
         cancel_response = self.execute_cancel_task([mission_id])
         self.assertEqual(cancel_response.result.task_status, TaskStatus.DONE)
@@ -461,6 +456,8 @@ class MissionTests(TaskManagerTestNode):
         self.assertEqual(mission_response.status, GoalStatus.STATUS_ABORTED)
         self.assertEqual(mission_response.result.task_status, TaskStatus.CANCELED)
         self.assertEqual(mission_result.mission_results[0].task_status, TaskStatus.CANCELED)
+        # Cancelling a paused mission must not dispatch the next subtask
+        self.assertNotIn("456", self._tasks_started)
 
     def test_stop_mission_with_parallel_task_having_slowly_canceling_subtask(self):
         """System/stop on a mission -> parallel task -> (fast canceling task, slowly canceling task).
