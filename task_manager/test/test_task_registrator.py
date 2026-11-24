@@ -106,9 +106,8 @@ class TestTaskRegistrator(unittest.TestCase):
 
         for test in test_cases:
             with self.subTest(test["case"]):
-                with self.assertRaises(ROSGoalParsingError) as context:
+                with self.assertRaisesRegex(ROSGoalParsingError, "Unable to parse task data"):
                     populate_msg(test["task_data"], Fibonacci.Goal())
-                    self.assertTrue("Unable to parse task data" in context.exception)
 
     def test_populate_msg_with_empty_data(self):
         """Check that empty task_data is handled correctly."""

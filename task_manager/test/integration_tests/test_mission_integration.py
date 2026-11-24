@@ -107,17 +107,15 @@ class MissionTests(TaskManagerTestNode):
         self._get_response(future, timeout=5)
 
         self.wait_for_task_start("123")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
         mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
+            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
         )
 
-        self.execute_pause_task([mission_id])
+        pause_response = self.execute_pause_task([mission_id])
+        self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
 
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id["123"].task_details.status, TaskStatus.PAUSED)
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
+        self.wait_for_task_status("123", TaskStatus.PAUSED)
         # The not-yet-started subtask must stay untouched - it never even reached ActiveTasks
         self.assertNotIn("456", self._tasks_started)
 

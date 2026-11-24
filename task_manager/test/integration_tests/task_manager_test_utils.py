@@ -223,8 +223,10 @@ class TaskManagerTestNode(unittest.TestCase):
         goal_handle = self._start_task(goal=goal)
         return goal_handle.get_result()
 
-    def start_wait_task(self, duration: float, task_id: str = str(uuid.uuid4())) -> ClientGoalHandle:
+    def start_wait_task(self, duration: float, task_id: str | None = None) -> ClientGoalHandle:
         """Starts the wait task with given duration and returns the goal handle."""
+        if task_id is None:
+            task_id = str(uuid.uuid4())
         wait_goal = Wait.Goal(duration=duration)
         task_data = json.dumps(extract_values(wait_goal))
         goal = ExecuteTask.Goal(task_id=task_id, task_name="system/wait", task_data=task_data, source="")

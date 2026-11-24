@@ -77,7 +77,7 @@ def test_perform_in_parallel_cb_rclpy_not_ok(
     goal_handle.request.subtasks = [MagicMock()]
     result = parallel_task_executor.perform_in_parallel_cb(goal_handle)
     assert result == PerformInParallel.Result()
-    assert goal_handle.abort.called_once()
+    goal_handle.abort.assert_called_once()
 
 
 def test_gather_and_try_preempt(parallel_task_executor: ParallelTaskExecutor) -> None:

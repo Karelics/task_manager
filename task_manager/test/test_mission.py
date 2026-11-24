@@ -318,22 +318,33 @@ class MissionUnittest(unittest.TestCase):
             self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
 
     def test_skipping_subtask(self):
-        """Tests that even though a subtask is aborted, no error is raised when the task is allowed to be skipped."""
+        """Tests that even though a subtask fails, the mission does not abort when the subtask is allowed to be skipped.
+
+        The mission continues with the next subtask and succeeds.
+        """
         request = MissionAction.Goal()
         request.subtasks = [
-            SubtaskGoal(task_name="test/mock_subtask", task_data="{}", allow_skipping=True, task_id="123")
+            SubtaskGoal(task_name="test/mock_subtask", task_data="{}", allow_skipping=True, task_id="123"),
+            SubtaskGoal(task_name="test/mock_subtask", task_data="{}", task_id="456"),
         ]
 
-        self.mission.execute_task_cb.return_value = ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}")
+        self.mission.execute_task_cb.side_effect = [
+            ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}"),
+            ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}"),
+        ]
 
         expected_result = MissionAction.Result()
         expected_result.mission_results = [
-            SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.ERROR, skipped=True, task_id="123")
+            SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.ERROR, skipped=True, task_id="123"),
+            SubtaskResult(task_name="test/mock_subtask", task_status=TaskStatus.DONE, skipped=False, task_id="456"),
         ]
         mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
-        mock_goal_handle.is_cancel_requested = False
         result = self.mission.execute_cb(goal_handle=mock_goal_handle)
+
         self.assertEqual(result, expected_result)
+        self.assertEqual(self.mission.execute_task_cb.call_count, 2)
+        mock_goal_handle.succeed.assert_called_once()
+        mock_goal_handle.abort.assert_not_called()
 
 
 if __name__ == "__main__":

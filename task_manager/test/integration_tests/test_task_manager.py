@@ -103,26 +103,33 @@ class TestTaskManager(TaskManagerTestNode):
         self.assertEqual(response.result.task_result, '{"sequence": []}')
         self.assertEqual(response.result.task_status, TaskStatus.CANCELED)
 
-    def execute_task_error_on_launch(self):
+    def test_execute_task_error_on_launch(self):
         """If the task errors during the validation steps before it even launches, make sure that the action result
         state is aborted and a task done result is published."""
         mock_publish = Mock()
         self.task_manager_node.results_pub.publish = mock_publish
 
-        with patch("task_manager.task_manager_node.TaskManager._start_task", return_value=(None, "error")):
+        error_code = ExecuteTask.Result.ERROR_TASK_START_ERROR
+
+        with patch("task_manager.task_manager_node.TaskManager._start_task", return_value=(None, error_code)):
             goal = create_fibonacci_task_goal(run_time_secs=0, task_id="123")
             goal_handle = self._start_task(goal)
             response = goal_handle.get_result()
 
             expected_result = ExecuteTask.Result(
-                task_id="123", task_result="{}", task_status="ERROR", error_code="error"
+                task_id="123", task_result="{}", task_status="ERROR", error_code=error_code
             )
 
             self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
             self.assertEqual(response.result, expected_result)
             mock_publish.assert_called_with(
                 TaskDoneResult(
-                    task_id="123", task_name="fibonacci", task_status="ERROR", source="CLOUD", task_result="{}"
+                    task_id="123",
+                    task_name="fibonacci",
+                    task_status="ERROR",
+                    error_code=error_code,
+                    source="CLOUD",
+                    task_result="{}",
                 )
             )
 
@@ -414,6 +421,7 @@ def _wait_for_calls(mock_object, calls, timeout=0.5):
     while time.time() <= timeout:
         try:
             mock_object.assert_has_calls(calls=calls)
+            return
         except AssertionError:
             pass
         time.sleep(1 / 100)
