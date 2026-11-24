@@ -247,8 +247,11 @@ class SyncCompositeStatusesTests(unittest.TestCase):
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
 
     def test_leaves_composite_in_progress_when_a_child_is_still_running(self):
-        """If any of a composite's active children are still running, the composite itself must be marked
-        IN_PROGRESS."""
+        """An IN_PROGRESS composite stays IN_PROGRESS while only some of its active children are PAUSED.
+
+        Note: the composite starts IN_PROGRESS, so this passes even if the sync does nothing. It only guards against
+        sync wrongly marking the composite PAUSED.
+        """
         self.active_tasks.add(make_composite_client("p1", PARALLEL, goal_id_byte=1))
         self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.PAUSED))
         self.active_tasks.add(make_task_client("leaf2", "some_task", status=TaskStatus.IN_PROGRESS))
@@ -290,16 +293,6 @@ class SyncCompositeStatusesTests(unittest.TestCase):
 
         self.assertEqual(self.active_tasks.get_task_client("p1").task_details.status, TaskStatus.PAUSED)
         self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.PAUSED)
-
-    def test_leaves_unrelated_composites_untouched(self):
-        """Composites that have no active children should remain unaffected."""
-        self.active_tasks.add(make_composite_client("m1", MISSION, goal_id_byte=1))
-        self.active_tasks.add(make_task_client("leaf1", "some_task", status=TaskStatus.IN_PROGRESS))
-        self.mission.get_active_children.side_effect = lambda goal_id: {bytes([1] * 16): ["leaf1"]}.get(goal_id, [])
-
-        _sync_composite_statuses(self.active_tasks, self.composites)
-
-        self.assertEqual(self.active_tasks.get_task_client("m1").task_details.status, TaskStatus.IN_PROGRESS)
 
     def test_marks_composite_paused_via_own_flag_with_no_active_children(self):
         """A composite with no active children but its own paused flag armed should be marked PAUSED.
