@@ -1,0 +1,28 @@
+{
+  "name": "task_manager",
+  "dockerComposeFile": [
+    "../docker/task_manager/docker-compose.yaml",
+    "docker-compose.devcontainer.yaml"
+  ],
+  "service": "task_manager",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "postCreateCommand": "git config --global --add safe.directory /workspace && pip3 install --no-cache-dir pre-commit",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "ms-python.isort",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.devcontainer/ros-python.sh",
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": ["task_manager/test"],
+        "python.analysis.extraPaths": ["/opt/ros/humble/lib/python3.10/site-packages", "/opt/ros/humble/local/lib/python3.10/dist-packages"]
+      }
+    }
+  }
+}

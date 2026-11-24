@@ -220,6 +220,22 @@ python3 -m pytest /ros2_ws/src/task_manager/test/
 ros2 launch task_manager task_manager.launch.py params_file:=/ros2_ws/src/task_manager/params/task_manager_defaults.yaml
 ```
 
+### VS Code Dev Container
+The repository also contains a [Dev Container](https://containers.dev/) setup in `.devcontainer/`, for developing and debugging Task Manager in VS Code inside the same Docker image that is used above.
+
+Prerequisites:
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- [VS Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+
+To start, open the repository folder in VS Code and run **Dev Containers: Reopen in Container** from the command palette. The first start builds the image and installs `pre-commit` in the container, so `pre-commit run --all-files` works in the container terminal.
+
+What the setup does:
+- The compose file `.devcontainer/docker-compose.devcontainer.yaml` is layered on top of `docker/task_manager/docker-compose.yaml`. It mounts the whole repository to `/workspace`, so git, pre-commit and the repository-level configuration work in the container, and keeps the container running with `sleep infinity`.
+- The container has its own project and container name, `task_manager_devcontainer`, so VS Code never attaches to a container started with `docker compose run` from `docker/task_manager`.
+- `ROS_DOMAIN_ID` is set to `42` by default, to avoid DDS collisions with ROS 2 nodes running on the host, since the container uses the host network.
+- The Python interpreter is `.devcontainer/ros-python.sh`. It sources the ROS 2 environment, which the VS Code Python extension does not do on its own, so `rclpy` and `task_manager` can be imported. It also puts `/workspace/task_manager` first on `PYTHONPATH`, so the debugger paths match the files that are open in VS Code and breakpoints work.
+- Tests are discovered with pytest from `task_manager/test`, and can be run and debugged from the VS Code Testing panel. The extensions for Python, Black, isort and Ruff are installed in the container.
+
 ## Roadmap
 
 The following features are planned as future enhancements for Task Manager:

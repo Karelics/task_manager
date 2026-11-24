@@ -7,6 +7,7 @@
 .idea/*
 .vscode
 .cache/*
+.claude
 /venv
 
 **/gazebo_init/*

@@ -1,0 +1,16 @@
+# Override for VSCode Dev Containers. Layered on top of docker/task_manager/docker-compose.yaml.
+# Paths are relative to the first compose file's directory (docker/task_manager).
+# Distinct project name, so Dev Containers never attaches to a container started by
+# `docker compose run` from docker/task_manager (same project/service labels, no /workspace mount).
+name: task_manager_devcontainer
+
+services:
+  task_manager:
+    container_name: task_manager_devcontainer
+    volumes:
+      # Whole repo, so git, pre-commit and repo-level config work inside the container.
+      - ../..:/workspace:cached
+    environment:
+      # Avoid DDS collisions with ROS 2 running on the host (network_mode: host).
+      ROS_DOMAIN_ID: "42"
+    command: sleep infinity
