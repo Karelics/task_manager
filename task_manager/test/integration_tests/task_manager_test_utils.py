@@ -343,7 +343,10 @@ class TaskManagerNodeParams:
         )
 
     def get_params(self):
-        """Returns the Task Manager parameters."""
+        """Sets and returns the Task Manager parameters.
+
+        Should be called only ONCE per test run.
+        """
         self._params.append(Parameter(name="tasks", value=self._tasks))
         self._params.append(Parameter(name="enable_task_servers", value=True))
         self._params.append(
