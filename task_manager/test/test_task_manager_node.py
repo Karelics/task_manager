@@ -196,6 +196,29 @@ class TestDeclareTasks(unittest.TestCase):
             },
         )
 
+    def test_service_success_field_missing_from_the_response_exits(self):
+        """A service_success_field that does not exist in the service Response is a configuration error: it is reported
+        and the node exits, instead of starting with a task that can never report success."""
+        task_manager = self._create_task_manager(
+            [Parameter("tasks", value=["add_two_ints"])]
+            + self._task_parameters(
+                "add_two_ints",
+                task_name="add_two_ints",
+                topic="/add_two_ints",
+                msg_interface="example_interfaces.srv.AddTwoInts",
+                blocking=False,
+                cancel_on_stop=False,
+                service_success_field="no_such_field",
+            )
+        )
+
+        with patch.object(task_manager, "get_logger") as get_logger:
+            with self.assertRaises(SystemExit):
+                task_manager.declare_tasks()
+
+        get_logger.return_value.error.assert_called_once()
+        self.assertEqual(task_manager.known_tasks, {})
+
 
 if __name__ == "__main__":
     unittest.main()
