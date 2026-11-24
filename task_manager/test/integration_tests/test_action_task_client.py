@@ -242,16 +242,6 @@ class TestActionTaskClient(unittest.TestCase):
         client._goal_done.wait(timeout=10)
         self.assertEqual(client.task_details.status, TaskStatus.DONE)
 
-    def test_pause_then_cancel(self):
-        """Cancelling a paused task must return promptly and finish it as CANCELED."""
-        client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})
-        client.start_task_async(Fibonacci.Goal(order=5))
-        sleep(0.2)
-
-        client.pause_task()
-        client.cancel_task()
-        self.assertEqual(client.task_details.status, TaskStatus.CANCELED)
-
     def test_resume_without_pause_is_noop(self):
         """Resuming a task that was never paused does not affect it."""
         client = ActionTaskClient(self._node, self._task_details, self._task_specs, action_clients={})

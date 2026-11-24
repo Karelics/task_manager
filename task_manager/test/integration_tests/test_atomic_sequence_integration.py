@@ -268,7 +268,7 @@ class AtomicSequenceTests(TaskManagerTestNode):
         self.execute_cancel_task([mission_id])
         self.assertEqual(mission_handle.get_result().result.task_status, TaskStatus.CANCELED)
 
-    def test_cancel_paused_mission(self):
+    def test_cancel_paused_mission_with_atomic_sequence(self):
         """Cancelling a mission while its atomic sequence is paused cancels both."""
         mission_handle = self._start_mission(self._two_pair_mission())
         self._wait_for_status("work1", TaskStatus.IN_PROGRESS)
