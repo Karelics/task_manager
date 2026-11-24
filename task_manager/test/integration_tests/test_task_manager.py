@@ -421,6 +421,7 @@ def _wait_for_calls(mock_object, calls, timeout=0.5):
     while time.time() <= timeout:
         try:
             mock_object.assert_has_calls(calls=calls)
+            return
         except AssertionError:
             pass
         time.sleep(1 / 100)
