@@ -15,6 +15,7 @@
 #  ------------------------------------------------------------------
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 # ROS
@@ -23,6 +24,7 @@ from rclpy import Parameter
 
 # ROS messages
 from example_interfaces.action import Fibonacci
+from example_interfaces.msg import String
 from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
@@ -30,7 +32,7 @@ from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
-from task_manager.task_manager_node import TaskManager
+from task_manager.task_manager_node import TaskManager, detect_task_server_type
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
 
@@ -241,6 +243,24 @@ class TestDeclareTasks(unittest.TestCase):
 
         get_logger.return_value.error.assert_called_once()
         self.assertEqual(task_manager.known_tasks, {})
+
+
+class TestDetectTaskServerType(unittest.TestCase):
+    """Unit tests for detect_task_server_type."""
+
+    def test_unsupported_interface_is_rejected(self):
+        """Only complete action (Goal and Result) and service (Request and Response) interfaces can be tasks."""
+        unsupported_interfaces = {
+            "plain message": String,
+            "action without Result": SimpleNamespace(Goal=object()),
+            "action without Goal": SimpleNamespace(Result=object()),
+            "service without Response": SimpleNamespace(Request=object()),
+            "service without Request": SimpleNamespace(Response=object()),
+        }
+        for case, interface in unsupported_interfaces.items():
+            with self.subTest(case):
+                with self.assertRaises(NotImplementedError):
+                    detect_task_server_type(interface)
 
 
 if __name__ == "__main__":
