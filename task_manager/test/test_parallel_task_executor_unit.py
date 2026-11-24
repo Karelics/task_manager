@@ -14,9 +14,10 @@
 #   limitations under the License.
 #  ------------------------------------------------------------------
 
-import threading
 import time
 from collections.abc import Generator
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 # ROS
@@ -157,42 +158,54 @@ def test_request_pause_resume_is_paused_state_transitions(parallel_task_executor
     assert parallel_task_executor.is_paused(goal_id) is False
 
 
-def test_wait_actions_done_completes_when_the_only_subtask_finished_while_paused(
-    parallel_task_executor: ParallelTaskExecutor,
-) -> None:
-    """Service tasks cannot be paused and should run to completion immediately."""
-    goal_id = b"\x03" * 16
+def make_paused_group(parallel_task_executor: ParallelTaskExecutor, goal_id: bytes) -> MagicMock:
+    """Returns the goal handle of a running, paused parallel group registered with the executor under goal_id."""
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
     goal_handle.is_active = True
     goal_handle.goal_id.uuid = list(goal_id)
 
-    task = make_parallel_task(TaskStatus.DONE)
-    task._task_client.goal_done = True
-
     parallel_task_executor._latest_goal_handle = goal_handle
     _register(parallel_task_executor, goal_id)
     parallel_task_executor.request_pause(goal_id)
+    return goal_handle
 
-    thread = threading.Thread(target=parallel_task_executor._wait_actions_done, args=(goal_handle, [task]))
-    thread.start()
-    try:
-        thread.join(timeout=2)
-        assert not thread.is_alive()
-    finally:
-        goal_handle.is_active = False
-        thread.join(timeout=2)
+
+@contextmanager
+def run_wait_actions_done(
+    parallel_task_executor: ParallelTaskExecutor, goal_handle: MagicMock, tasks: list[ParallelTask]
+) -> Generator[Future, None, None]:
+    """Runs _wait_actions_done in a worker thread and yields its future.
+
+    Use future.result(timeout=...) to assert that it returns: it raises TimeoutError if it does not, and re-raises any
+    error from the worker. On exit the worker is always stopped and joined.
+    """
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(parallel_task_executor._wait_actions_done, goal_handle, tasks)
+        try:
+            yield future
+        finally:
+            goal_handle.is_active = False  # Lets the worker exit if the test failed early
+
+
+def test_wait_actions_done_completes_when_the_only_subtask_finished_while_paused(
+    parallel_task_executor: ParallelTaskExecutor,
+) -> None:
+    """Service tasks cannot be paused and should run to completion immediately."""
+    goal_handle = make_paused_group(parallel_task_executor, b"\x03" * 16)
+
+    task = make_parallel_task(TaskStatus.DONE)
+    task._task_client.goal_done = True
+
+    with run_wait_actions_done(parallel_task_executor, goal_handle, [task]) as future:
+        future.result(timeout=2)
 
 
 def test_wait_actions_done_tears_down_when_a_member_finishes(
     parallel_task_executor: ParallelTaskExecutor,
 ) -> None:
     """Test that _wait_actions_done tears down immediately when a member finishes."""
-    goal_id = b"\x06" * 16
-    goal_handle = MagicMock()
-    goal_handle.is_cancel_requested = False
-    goal_handle.is_active = True
-    goal_handle.goal_id.uuid = list(goal_id)
+    goal_handle = make_paused_group(parallel_task_executor, b"\x06" * 16)
 
     finished_task = make_parallel_task(TaskStatus.DONE, task_id="finished")
     finished_task._task_client.goal_done = True
@@ -200,40 +213,18 @@ def test_wait_actions_done_tears_down_when_a_member_finishes(
     paused_task = make_parallel_task(TaskStatus.PAUSED, task_id="paused")
     paused_task._task_client.goal_done = False
 
-    parallel_task_executor._latest_goal_handle = goal_handle
-    _register(parallel_task_executor, goal_id)
-    parallel_task_executor.request_pause(goal_id)
-
-    thread = threading.Thread(
-        target=parallel_task_executor._wait_actions_done, args=(goal_handle, [finished_task, paused_task])
-    )
-    thread.start()
-    thread.join(timeout=2)
-    assert not thread.is_alive()
+    with run_wait_actions_done(parallel_task_executor, goal_handle, [finished_task, paused_task]) as future:
+        future.result(timeout=2)
 
 
 def test_wait_actions_done_cancel_still_ends_it_while_paused(parallel_task_executor: ParallelTaskExecutor) -> None:
     """A genuine cancel of the group's own goal must end _wait_actions_done immediately, regardless of whether the group
     is currently paused."""
-    goal_id = b"\x04" * 16
-    goal_handle = MagicMock()
-    goal_handle.is_cancel_requested = False
-    goal_handle.is_active = True
-    goal_handle.goal_id.uuid = list(goal_id)
+    goal_handle = make_paused_group(parallel_task_executor, b"\x04" * 16)
 
-    parallel_task_executor._latest_goal_handle = goal_handle
-    _register(parallel_task_executor, goal_id)
-    parallel_task_executor.request_pause(goal_id)
-
-    thread = threading.Thread(target=parallel_task_executor._wait_actions_done, args=(goal_handle, []))
-    thread.start()
-    try:
+    with run_wait_actions_done(parallel_task_executor, goal_handle, []) as future:
         time.sleep(0.3)
-        assert thread.is_alive()
+        assert not future.done()
 
         goal_handle.is_cancel_requested = True
-        thread.join(timeout=2)
-        assert not thread.is_alive()
-    finally:
-        goal_handle.is_active = False
-        thread.join(timeout=2)
+        future.result(timeout=2)
