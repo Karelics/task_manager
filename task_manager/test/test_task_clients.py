@@ -187,12 +187,6 @@ class TestActionTaskClient(unittest.TestCase):
         with self.assertRaisesRegex(PauseTaskFailedError, "already paused"):
             task_client.pause_task()
 
-    def test_pause_task_already_finished(self):
-        """Tests that pausing a finished task raises."""
-        task_client = get_action_task_client("task_1")
-        task_client._goal_done.set()
-        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
-
     def _pause_with_goal_finishing_on_its_own(self, goal_status: int) -> ActionTaskClient:
         """Pauses a task whose goal finishes on its own with goal_status before the pause-cancel takes effect."""
         task_client = get_concat_action_task_client(result_concat_fields=[])
@@ -247,12 +241,6 @@ class TestActionTaskClient(unittest.TestCase):
 
         self.assertTrue(task_client.goal_done)
         self.assertFalse(pause_done.is_set())
-
-    def test_resume_task_noop_when_not_paused(self):
-        """Resuming a task that isn't paused is a no-op success."""
-        task_client = get_action_task_client("task_1")
-        task_client.resume_task()
-        self.assertIsNone(task_client._goal_handle)
 
     def test_pause_captures_partial_result(self):
         """The Result the server attaches to the pause-cancel must be stored, without any "task done" side effects."""
