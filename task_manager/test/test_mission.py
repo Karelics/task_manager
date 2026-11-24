@@ -17,6 +17,9 @@
 import threading
 import time
 import unittest
+from collections.abc import Generator
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from unittest import mock
 from unittest.mock import Mock, patch
 
@@ -139,6 +142,20 @@ class MissionUnittest(unittest.TestCase):
         self.assertFalse(self.mission.request_resume(unknown_goal_id))
         self.assertFalse(self.mission.is_paused(unknown_goal_id))
 
+    @contextmanager
+    def _run_mission(self, goal_handle) -> Generator[Future, None, None]:
+        """Runs the mission's execute_cb in a worker thread and yields its future.
+
+        Use future.result(timeout=...) to assert that it returns: it raises TimeoutError if it does not, and re-raises
+        any error from the worker. On exit the worker is always stopped and joined.
+        """
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self.mission.execute_cb, goal_handle)
+            try:
+                yield future
+            finally:
+                goal_handle.is_cancel_requested = True  # Lets the worker exit if the test failed early
+
     @staticmethod
     def _wait_until(predicate, timeout=2.0):
         deadline = time.monotonic() + timeout
@@ -172,19 +189,14 @@ class MissionUnittest(unittest.TestCase):
         self.mission.execute_task_cb.side_effect = fake_execute_task_cb
         goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
 
-        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
-        thread.start()
-        try:
+        with self._run_mission(goal_handle) as future:
             self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
             self.assertEqual(dispatched, ["a"])
 
             self.mission.request_resume(goal_id)
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
+            future.result(timeout=2)
             self.assertEqual(dispatched, ["a", "b"])
             goal_handle.succeed.assert_called_once()
-        finally:
-            thread.join(timeout=2)
 
     def test_paused_mission_can_still_be_cancelled(self):
         """A cancel while the mission is paused, ends the mission."""
@@ -206,17 +218,12 @@ class MissionUnittest(unittest.TestCase):
         self.mission.execute_task_cb.side_effect = fake_execute_task_cb
         goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
 
-        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
-        thread.start()
-        try:
+        with self._run_mission(goal_handle) as future:
             self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
             goal_handle.is_cancel_requested = True
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
+            future.result(timeout=2)
             goal_handle.canceled.assert_called_once()
             self.assertEqual(dispatched, ["a"])
-        finally:
-            thread.join(timeout=2)
 
     def test_pause_holds_next_subtask_when_skipping(self):
         """Pausing still holds the next subtask when the current one errors and is skippable."""
@@ -239,9 +246,7 @@ class MissionUnittest(unittest.TestCase):
         self.mission.execute_task_cb.side_effect = fake_execute_task_cb
         goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
 
-        thread = threading.Thread(target=self.mission.execute_cb, args=(goal_handle,))
-        thread.start()
-        try:
+        with self._run_mission(goal_handle) as future:
             self.assertTrue(self._wait_until(lambda: self.mission.is_paused(goal_id)))
 
             # "b" must not start while paused - wait for a moment to show that it doesn't.
@@ -249,11 +254,8 @@ class MissionUnittest(unittest.TestCase):
 
             self.mission.request_resume(goal_id)
             self.assertTrue(subtask_b_started.wait(timeout=2))
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
+            future.result(timeout=2)
             goal_handle.succeed.assert_called_once()
-        finally:
-            thread.join(timeout=2)
 
     def test_mission_not_successful(self):
         """Tests that the Mission ends up canceled or aborted, and that the subtask's status is recorded in the result,

@@ -66,12 +66,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         # In the future, we need to have a way to abort the whole mission when we get a new blocking task, instead of
         # simply cancelling the individual sub-tasks. Now we might get a situation that while mission is running a
@@ -99,17 +94,10 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
-        mission_id = next(
-            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         pause_response = self.execute_pause_task([mission_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -132,24 +120,14 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status("123", TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
         # The not-yet-started subtask must stay untouched - it never even reached ActiveTasks
         self.assertNotIn("456", self._tasks_started)
 
@@ -161,7 +139,7 @@ class MissionTests(TaskManagerTestNode):
         )
 
         self.wait_for_task_status("123", TaskStatus.IN_PROGRESS)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status(mission_id, TaskStatus.IN_PROGRESS)
 
         mission_response = mission_goal_handle.get_result()
         mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
@@ -184,24 +162,14 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("456")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status("456", TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
 
         # Resuming any task related to the mission should resume the whole mission
         resume_response = self.execute_resume_task([mission_id])
@@ -211,7 +179,7 @@ class MissionTests(TaskManagerTestNode):
         )
 
         self.wait_for_task_status("789", TaskStatus.IN_PROGRESS)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status(mission_id, TaskStatus.IN_PROGRESS)
 
         mission_response = mission_goal_handle.get_result()
         mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
@@ -236,25 +204,14 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("456")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
-        res = self.execute_pause_task([mission_id])
-        print(res)
+        self.execute_pause_task([mission_id])
         self.wait_for_task_status("456", TaskStatus.DONE)  # The service task will complete when paused
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
 
         # Resuming any task related to the mission should resume the whole mission
         resume_response = self.execute_resume_task([mission_id])
@@ -264,7 +221,7 @@ class MissionTests(TaskManagerTestNode):
         )
 
         self.wait_for_task_status("789", TaskStatus.IN_PROGRESS)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status(mission_id, TaskStatus.IN_PROGRESS)
 
         mission_response = mission_goal_handle.get_result()
         mission_result = populate_instance(json.loads(mission_response.result.task_result), Mission.Result())
@@ -282,27 +239,16 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("123456")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         pause_response = self.execute_pause_task([mission_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
 
         self.wait_for_task_status("123456", TaskStatus.DONE)
-        self.wait_for_task_status(mission_id, TaskStatus.DONE)  # This prevents flakiness of the test
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.DONE)
+        self.wait_for_task_status(mission_id, TaskStatus.DONE)
 
     def test_pause_subtask_of_parallel_task_running_inside_mission(self):
         """All the tasks should end up with PAUSED state."""
@@ -322,21 +268,11 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("fib1")
         self.wait_for_task_start("fib2")
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        mission_id = next(
-            task_id for task_id, task in active_tasks_by_id.items() if task.task_specs.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         pause_response = self.execute_pause_task(["fib1"])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -346,8 +282,8 @@ class MissionTests(TaskManagerTestNode):
 
         self.wait_for_task_status("fib1", TaskStatus.PAUSED)
         self.wait_for_task_status("fib2", TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id["parallel"].task_details.status, TaskStatus.PAUSED)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.PAUSED)
+        self.wait_for_task_status("parallel", TaskStatus.PAUSED)
+        self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
 
         # Resuming the Mission by its own task_id resumes the whole nested group underneath it
         resume_response = self.execute_resume_task([mission_id])
@@ -355,8 +291,8 @@ class MissionTests(TaskManagerTestNode):
 
         self.wait_for_task_status("fib1", TaskStatus.IN_PROGRESS)
         self.wait_for_task_status("fib2", TaskStatus.IN_PROGRESS)
-        self.assertEqual(active_tasks_by_id["parallel"].task_details.status, TaskStatus.IN_PROGRESS)
-        self.assertEqual(active_tasks_by_id[mission_id].task_details.status, TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status("parallel", TaskStatus.IN_PROGRESS)
+        self.wait_for_task_status(mission_id, TaskStatus.IN_PROGRESS)
 
         # Clean up - cancel the whole mission so the test doesn't wait out the full fibonacci duration
         self.execute_cancel_task([mission_id])
@@ -391,25 +327,17 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal(task_name="system/mission", task_data=json.dumps(extract_values(outer_mission_goal)))
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(outer_mission_goal)
 
         self.wait_for_task_start("leaf")
 
-        active_tasks_by_id = {
-            task.task_details.task_id: task for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-        outer_mission_id = next(
-            task_id
-            for task_id, task in active_tasks_by_id.items()
-            if task.task_specs.task_name == "system/mission" and task_id != "inner_mission"
-        )
+        outer_mission_id = self.get_task_id("system/mission", exclude=("inner_mission",))
 
         # The outer mission must still be IN_PROGRESS, not aborted/cancelled by the inner mission's start.
-        self.assertEqual(active_tasks_by_id[outer_mission_id].task_details.status, TaskStatus.IN_PROGRESS)
-        self.assertIn("inner_mission", active_tasks_by_id)
-        self.assertEqual(active_tasks_by_id["inner_mission"].task_details.status, TaskStatus.IN_PROGRESS)
+        active_tasks = self.get_active_tasks()
+        self.assertEqual(active_tasks[outer_mission_id].task_status, TaskStatus.IN_PROGRESS)
+        self.assertIn("inner_mission", active_tasks)
+        self.assertEqual(active_tasks["inner_mission"].task_status, TaskStatus.IN_PROGRESS)
 
         # Clean up
         self.execute_cancel_task([outer_mission_id])
@@ -424,17 +352,10 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
-        mission_id = next(
-            task_id for task_id, task in self.get_active_tasks().items() if task.task_name == "system/mission"
-        )
+        mission_id = self.get_task_id("system/mission")
 
         self.execute_pause_task([mission_id])
         self.wait_for_task_status(mission_id, TaskStatus.PAUSED)
@@ -487,15 +408,12 @@ class MissionTests(TaskManagerTestNode):
                 ),
             ]
         )
-        goal = ExecuteTask.Goal(
-            task_name="system/mission", task_id="mission", task_data=json.dumps(extract_values(mission_goal))
-        )
         # The slow task is allowed to continue after the parallel cancel, like the robot's recording task
         self.task_manager_node.known_tasks["fibonacci_cancel_on_stop"].require_finish_on_parallel_cancel = False
         # Scaled down robot values: mission 5s (TaskSpecs default), parallel task 6s
         self.task_manager_node.known_tasks["system/mission"].cancel_timeout = 2.0
         self.task_manager_node.known_tasks["system/perform_in_parallel"].cancel_timeout = 2.4
-        mission_goal_handle = self._start_task(goal)
+        mission_goal_handle = self.start_mission(mission_goal, task_id="mission")
         self.wait_for_task_start("fast")
         self.wait_for_task_start("slow")
 
