@@ -256,66 +256,40 @@ class MissionUnittest(unittest.TestCase):
             thread.join(timeout=2)
 
     def test_mission_not_successful(self):
-        """Tests that the status of the subtasks are set correctly when the subtasks fail or are cancelled, or if the
-        Mission is cancelled."""
-        request = MissionAction.Goal(subtasks=[SubtaskGoal(task_name="test/mock_subtask", task_data="{}")])
-        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+        """Tests that the Mission ends up canceled or aborted, and that the subtask's status is recorded in the result,
+        when a subtask is cancelled or fails, with and without `allow_skipping`.
 
-        def cancel_requested_while_running(status):
-            # A cancel arrives while the subtask is running (not before it started) - Mission.execute_cb() must
-            # still dispatch the subtask, and only decide cancel-vs-abort once its result comes back.
-            def _side_effect(_goal, _goal_handle):
-                mock_goal_handle.is_cancel_requested = True
-                return ExecuteTask.Result(task_status=status, task_result="{}")
+        A cancel that arrives while the subtask is running must still let the subtask be dispatched, and only be decided
+        on cancel-vs-abort once its result comes back. `allow_skipping` must not save a subtask once the mission itself
+        is being cancelled.
+        """
+        cases = [
+            # (name, allow_skipping, cancel_while_running, subtask_status, expected goal handle call)
+            ("canceled", False, True, TaskStatus.CANCELED, "canceled"),
+            ("error", False, False, TaskStatus.ERROR, "abort"),
+            ("canceled_with_allow_skipping", True, True, TaskStatus.CANCELED, "canceled"),
+            ("error_while_canceled_with_allow_skipping", True, True, TaskStatus.ERROR, "abort"),
+        ]
+        for name, allow_skipping, cancel_while_running, subtask_status, expected_call in cases:
+            with self.subTest(name):
+                request = MissionAction.Goal(
+                    subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=allow_skipping, task_data="{}")]
+                )
+                mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
 
-            return _side_effect
+                def execute_task(
+                    _goal, _goal_handle, handle=mock_goal_handle, cancel=cancel_while_running, status=subtask_status
+                ):
+                    handle.is_cancel_requested = cancel
+                    return ExecuteTask.Result(task_status=status, task_result="{}")
 
-        with self.subTest("canceled"):
-            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.CANCELED)
-            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
-            mock_goal_handle.canceled.assert_called_once()
-            self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
+                self.mission.execute_task_cb.side_effect = execute_task
 
-        mock_goal_handle.reset_mock()
-        mock_goal_handle.is_cancel_requested = False
-        with self.subTest("error"):
-            self.mission.execute_task_cb.side_effect = None
-            self.mission.execute_task_cb.return_value = ExecuteTask.Result(
-                task_status=TaskStatus.ERROR, task_result="{}"
-            )
-            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
-            mock_goal_handle.abort.assert_called_once()
-            self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
+                result = self.mission.execute_cb(goal_handle=mock_goal_handle)
 
-    def test_mission_not_successful_skipping_task(self):
-        """Tests that the mission is properly cancelled or aborted when the last subtask is skipped."""
-        request = MissionAction.Goal(
-            subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}")]
-        )
-        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
-
-        def cancel_requested_while_running(status):
-            # A cancel arrives while the subtask is running (not before it started) - allow_skipping must not
-            # save it once the mission itself is being cancelled.
-            def _side_effect(_goal, _goal_handle):
-                mock_goal_handle.is_cancel_requested = True
-                return ExecuteTask.Result(task_status=status, task_result="{}")
-
-            return _side_effect
-
-        with self.subTest("mission_canceled"):
-            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.CANCELED)
-            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
-            mock_goal_handle.canceled.assert_called_once()
-            self.assertEqual(result.mission_results[0].task_status, TaskStatus.CANCELED)
-
-        mock_goal_handle.reset_mock()
-        mock_goal_handle.is_cancel_requested = False
-        with self.subTest("mission_error"):
-            self.mission.execute_task_cb.side_effect = cancel_requested_while_running(TaskStatus.ERROR)
-            result = self.mission.execute_cb(goal_handle=mock_goal_handle)
-            mock_goal_handle.abort.assert_called_once()
-            self.assertEqual(result.mission_results[0].task_status, TaskStatus.ERROR)
+                getattr(mock_goal_handle, expected_call).assert_called_once()
+                mock_goal_handle.succeed.assert_not_called()
+                self.assertEqual(result.mission_results[0].task_status, subtask_status)
 
     def test_skipping_subtask(self):
         """Tests that even though a subtask fails, the mission does not abort when the subtask is allowed to be skipped.
