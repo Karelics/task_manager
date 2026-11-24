@@ -49,6 +49,7 @@ class SystemTaskTests(TaskManagerTestNode):
         # status ABORTED, even though the Task will be CANCELED.
         self.assertEqual(goal_handle.get_result().status, GoalStatus.STATUS_ABORTED)
         self.assertEqual(goal_handle.get_result().result.task_status, TaskStatus.CANCELED)
+        self.assertEqual(goal_handle.get_result().result.task_result, '{"sequence": []}')
 
     def test_cancel_task_non_existing_id(self) -> None:
         """Test trying to cancel a non-existing task."""

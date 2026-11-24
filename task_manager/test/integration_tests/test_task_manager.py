@@ -87,22 +87,6 @@ class TestTaskManager(TaskManagerTestNode):
         goal_handle_2 = self.start_fibonacci_action_task(task_name="fibonacci_blocking", run_time_secs=0)
         goal_handle_2.get_result()
 
-    def test_execute_task_cancel_called_externally(self):
-        """Task execution is cancelled by an external source (normally CancelTask) in the middle of the task."""
-        goal = create_fibonacci_task_goal(task_name="fibonacci", run_time_secs=5, task_id="123")
-        goal_handle = self._start_task(goal)
-
-        # It will take a while to register the task as an active task once the request has been sent.
-        self.wait_for_task_start(task_id="123")
-        task_client = self.task_manager_node.active_tasks._active_tasks["123"]
-
-        task_client.cancel_task()
-        response = goal_handle.get_result()
-
-        self.assertEqual(response.status, GoalStatus.STATUS_ABORTED)
-        self.assertEqual(response.result.task_result, '{"sequence": []}')
-        self.assertEqual(response.result.task_status, TaskStatus.CANCELED)
-
     def test_execute_task_error_on_launch(self):
         """If the task errors during the validation steps before it even launches, make sure that the action result
         state is aborted and a task done result is published."""
