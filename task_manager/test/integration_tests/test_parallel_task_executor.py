@@ -304,13 +304,6 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
 
         self.assertEqual(result.result.task_status, TaskStatus.DONE)
 
-    def _active_task_ids_by_name(self) -> dict[str, str]:
-        """Maps task_name -> task_id for all currently active tasks (only useful for names known to be unique)."""
-        return {
-            task.task_specs.task_name: task.task_details.task_id
-            for task in self.task_manager_node.active_tasks.get_active_tasks()
-        }
-
     def test_pause_one_subtask_pauses_the_whole_group(self):
         """Pausing one member of a parallel group pauses every member together, and reflects PAUSED onto the parallel
         task's own status.
@@ -326,7 +319,7 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         goal_handle = self.run_parallel_tasks(goal)
         self.wait_for_task_start("fib")
         self.wait_for_task_start("fib2")
-        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+        parallel_id = self.get_task_id("system/perform_in_parallel")
 
         pause_response = self.execute_pause_task(["fib"])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -368,7 +361,7 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         goal_handle = self.run_parallel_tasks(goal)
         self.wait_for_task_start("fib")
         self.wait_for_task_start("fib2")
-        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+        parallel_id = self.get_task_id("system/perform_in_parallel")
 
         pause_response = self.execute_pause_task([parallel_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)
@@ -394,7 +387,7 @@ class TestParallelTaskExecutor(TaskManagerTestNode):
         goal_handle = self.run_parallel_tasks(goal)
         self.wait_for_task_start("fib")
         self.wait_for_task_start("add")
-        parallel_id = self._active_task_ids_by_name()["system/perform_in_parallel"]
+        parallel_id = self.get_task_id("system/perform_in_parallel")
 
         pause_response = self.execute_pause_task([parallel_id])
         self.assertEqual(pause_response.result.task_status, TaskStatus.DONE)

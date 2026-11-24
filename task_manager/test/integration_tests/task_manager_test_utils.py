@@ -20,6 +20,7 @@ import time
 import unittest
 import uuid
 from asyncio import Future
+from collections.abc import Callable
 
 # ROS
 import rclpy
@@ -133,19 +134,21 @@ class TaskManagerTestNode(unittest.TestCase):
             time.sleep(0.01)
         return future.result()
 
+    @staticmethod
+    def wait_until(condition: Callable[[], bool], timeout: float = 5.0) -> None:
+        """Polls the condition until it is true, fails with an AssertionError if it is not met within the timeout."""
+        start = time.time()
+        while not condition():
+            assert time.time() - start < timeout, "Condition not met within timeout"
+            time.sleep(0.01)
+
     def wait_for_task_start(self, task_id: str, timeout: float = 5.0) -> None:
         """Utility function to wait for the task to be started."""
-        start = time.time()
-        while task_id not in self._tasks_started:
-            assert time.time() - start < timeout
-            time.sleep(0.01)
+        self.wait_until(lambda: task_id in self._tasks_started, timeout)
 
     def wait_for_task_status(self, task_id: str, status: str, timeout: float = 5.0) -> None:
         """Utility function to wait until the active tasks topic reports the given task with the given status."""
-        start = time.time()
-        while self._task_statuses.get(task_id) != status:
-            assert time.time() - start < timeout
-            time.sleep(0.01)
+        self.wait_until(lambda: self._task_statuses.get(task_id) == status, timeout)
 
     def get_active_tasks(self) -> dict[str, ActiveTask]:
         """Returns the current active tasks as a dictionary mapping task IDs to ActiveTask instances."""
@@ -161,19 +164,21 @@ class TaskManagerTestNode(unittest.TestCase):
             goal.task_id = task_id
         return self._start_task(goal)
 
-    def get_mission_id(self, exclude: tuple[str, ...] = ()) -> str:
-        """Returns the task id of a running system/mission, read from the active tasks topic.
+    def get_task_id(self, task_name: str, exclude: tuple[str, ...] = ()) -> str:
+        """Returns the task id of a running task with the given name, read from the active tasks topic.
 
-        Call it after wait_for_task_start() of one of the mission's subtasks, so that the mission has certainly been
-        published.
+        Call it after wait_for_task_start() of a task that starts after the wanted one (for example a subtask of it), so
+        that the wanted task has certainly been published. For majority of the tests, we assume that there will be only
+        one task with the given name running at a time.
 
-        :param exclude: Task ids to skip, for tests with more than one mission.
-        :raises StopIteration: If no matching mission has been published.
+        :param task_name: Name of the task, for example "system/perform_in_parallel".
+        :param exclude: Task ids to skip, for tests with more than one task of the same name.
+        :raises StopIteration: If no matching task has been published.
         """
         return next(
             task_id
             for task_id, task in self.get_active_tasks().items()
-            if task.task_name == "system/mission" and task_id not in exclude
+            if task.task_name == task_name and task_id not in exclude
         )
 
     def start_fibonacci_action_task(
