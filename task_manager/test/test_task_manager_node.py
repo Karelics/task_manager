@@ -17,14 +17,21 @@
 import unittest
 from unittest.mock import Mock, patch
 
+# ROS
+import rclpy
+from rclpy import Parameter
+
 # ROS messages
 from example_interfaces.action import Fibonacci
+from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
 
 # Task Manager
+from task_manager.active_tasks import ActiveTasks
 from task_manager.task_manager_node import TaskManager
+from task_manager.task_specs import TaskServerType, TaskSpecs
 
 
 class TestWaitForTaskFinish(unittest.TestCase):
@@ -54,6 +61,140 @@ class TestWaitForTaskFinish(unittest.TestCase):
 
         self.assertEqual(status, TaskStatus.IN_PROGRESS)
         self.assertEqual(task_result, "")
+
+
+class TestDeclareTasks(unittest.TestCase):
+    """Unit tests for TaskManager.declare_tasks."""
+
+    def setUp(self) -> None:
+        rclpy.init()
+        self.addCleanup(rclpy.try_shutdown)
+
+    def _create_task_manager(self, parameters: list[Parameter] | None = None) -> TaskManager:
+        task_manager = TaskManager(active_tasks=ActiveTasks(), parameter_overrides=parameters)
+        self.addCleanup(task_manager.destroy_node)
+        return task_manager
+
+    @staticmethod
+    def _task_parameters(task: str, **values) -> list[Parameter]:
+        return [Parameter(f"{task}.{name}", value=value) for name, value in values.items()]
+
+    def test_no_tasks_declared_logs_an_error_and_declares_nothing(self):
+        """Without a 'tasks' parameter nothing is declared, and the missing configuration is reported as an error."""
+        task_manager = self._create_task_manager()
+
+        with patch.object(task_manager, "get_logger") as get_logger:
+            task_manager.declare_tasks()
+
+        self.assertEqual(task_manager.known_tasks, {})
+        get_logger.return_value.error.assert_called_once()
+
+    def test_declared_tasks_get_their_specs_from_the_parameters(self):
+        """Every task parameter ends up in the matching field of the task's specs, and the task server type is detected
+        from the message interface.
+
+        The values differ between the two tasks, so that a parameter read into the wrong field is noticed.
+        """
+        task_manager = self._create_task_manager(
+            [Parameter("tasks", value=["fibonacci", "add_two_ints"])]
+            + self._task_parameters(
+                "fibonacci",
+                task_name="fibonacci",
+                topic="/fibonacci_topic",
+                msg_interface="example_interfaces.action.Fibonacci",
+                blocking=True,
+                cancel_on_stop=False,
+                cancel_reported_as_success=False,
+                reentrant=True,
+                cancel_timeout=3.5,
+                require_finish_on_parallel_cancel=False,
+                result_concat_fields=["sequence"],
+            )
+            + self._task_parameters(
+                "add_two_ints",
+                task_name="add_two_ints",
+                topic="/add_two_ints_topic",
+                msg_interface="example_interfaces.srv.AddTwoInts",
+                blocking=False,
+                cancel_on_stop=True,
+                cancel_reported_as_success=True,
+                reentrant=False,
+                cancel_timeout=2.5,
+                service_success_field="sum",
+            )
+        )
+
+        task_manager.declare_tasks()
+
+        self.assertEqual(
+            task_manager.known_tasks,
+            {
+                "fibonacci": TaskSpecs(
+                    task_name="fibonacci",
+                    topic="/fibonacci_topic",
+                    msg_interface=Fibonacci,
+                    task_server_type=TaskServerType.ACTION,
+                    blocking=True,
+                    cancel_on_stop=False,
+                    cancel_reported_as_success=False,
+                    reentrant=True,
+                    cancel_timeout=3.5,
+                    require_finish_on_parallel_cancel=False,
+                    result_concat_fields=["sequence"],
+                ),
+                "add_two_ints": TaskSpecs(
+                    task_name="add_two_ints",
+                    topic="/add_two_ints_topic",
+                    msg_interface=AddTwoInts,
+                    task_server_type=TaskServerType.SERVICE,
+                    blocking=False,
+                    cancel_on_stop=True,
+                    cancel_reported_as_success=True,
+                    reentrant=False,
+                    cancel_timeout=2.5,
+                    service_success_field="sum",
+                ),
+            },
+        )
+
+    def test_optional_task_parameters_have_defaults(self):
+        """A task that only sets the required parameters gets the documented defaults.
+
+        Its cancel timeout comes from the 'default_cancel_timeout' parameter.
+        """
+        task_manager = self._create_task_manager(
+            [Parameter("tasks", value=["fibonacci"]), Parameter("default_cancel_timeout", value=7.0)]
+            + self._task_parameters(
+                "fibonacci",
+                task_name="fibonacci",
+                topic="/fibonacci_topic",
+                msg_interface="example_interfaces.action.Fibonacci",
+                blocking=False,
+                cancel_on_stop=False,
+            )
+        )
+
+        task_manager.declare_tasks()
+
+        self.assertEqual(
+            task_manager.known_tasks,
+            {
+                "fibonacci": TaskSpecs(
+                    task_name="fibonacci",
+                    topic="/fibonacci_topic",
+                    msg_interface=Fibonacci,
+                    task_server_type=TaskServerType.ACTION,
+                    blocking=False,
+                    cancel_on_stop=False,
+                    cancel_reported_as_success=False,
+                    reentrant=False,
+                    service_success_field="",
+                    cancel_timeout=7.0,
+                    require_finish_on_parallel_cancel=True,
+                    result_concat_fields=[],
+                )
+            },
+        )
 
 
 if __name__ == "__main__":
