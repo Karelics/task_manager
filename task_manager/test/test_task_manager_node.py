@@ -219,6 +219,29 @@ class TestDeclareTasks(unittest.TestCase):
         get_logger.return_value.error.assert_called_once()
         self.assertEqual(task_manager.known_tasks, {})
 
+    def test_result_concat_field_missing_from_the_result_exits(self):
+        """A result_concat_fields entry that does not exist in the action Result is a configuration error: it is
+        reported and the node exits, instead of silently never concatenating that field."""
+        task_manager = self._create_task_manager(
+            [Parameter("tasks", value=["fibonacci"])]
+            + self._task_parameters(
+                "fibonacci",
+                task_name="fibonacci",
+                topic="/fibonacci",
+                msg_interface="example_interfaces.action.Fibonacci",
+                blocking=False,
+                cancel_on_stop=False,
+                result_concat_fields=["sequence", "no_such_field"],
+            )
+        )
+
+        with patch.object(task_manager, "get_logger") as get_logger:
+            with self.assertRaises(SystemExit):
+                task_manager.declare_tasks()
+
+        get_logger.return_value.error.assert_called_once()
+        self.assertEqual(task_manager.known_tasks, {})
+
 
 if __name__ == "__main__":
     unittest.main()
