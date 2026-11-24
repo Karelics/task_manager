@@ -182,7 +182,9 @@ class TestActionTaskClient(unittest.TestCase):
         """Tests that pausing an already-paused task raises."""
         task_client = get_action_task_client("task_1")
         task_client.task_details.status = TaskStatus.PAUSED
-        self.assertRaises(PauseTaskFailedError, task_client.pause_task)
+        task_client._pause_state.paused = True  # the flag pause_task() actually checks, status alone is not enough
+        with self.assertRaisesRegex(PauseTaskFailedError, "already paused"):
+            task_client.pause_task()
 
     def test_pause_task_already_finished(self):
         """Tests that pausing a finished task raises."""
