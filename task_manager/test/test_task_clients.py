@@ -66,10 +66,7 @@ class TestActionTaskClient(unittest.TestCase):
         """Test normal execution of the goal_done_cb."""
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[0, 1])
-        )
+        goal_future = make_goal_future(GoalStatus.STATUS_SUCCEEDED, [0, 1])
 
         task_client._goal_done_cb(goal_future)
 
@@ -86,8 +83,7 @@ class TestActionTaskClient(unittest.TestCase):
         """Test goal_done_cb when the goal status is not valid."""
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(status=-1, result=Fibonacci.Result())
+        goal_future = make_goal_future(-1)
 
         task_client._goal_done_cb(goal_future)
 
@@ -195,10 +191,7 @@ class TestActionTaskClient(unittest.TestCase):
         task_client._goal_handle = Mock()
 
         def goal_finishes():
-            goal_future = Future(executor=Mock())
-            goal_future._result = Fibonacci.Impl.GetResultService.Response(
-                status=goal_status, result=Fibonacci.Result(sequence=[0, 1])
-            )
+            goal_future = make_goal_future(goal_status, [0, 1])
             task_client._goal_done_cb(goal_future)
 
         start = time.monotonic()
@@ -232,10 +225,7 @@ class TestActionTaskClient(unittest.TestCase):
         """A goal finishing normally, without a pause in progress, must not touch the pause_done event."""
         task_client = get_action_task_client("task_1")
         pause_done = task_client._pause_state.pause_done
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=[0, 1])
-        )
+        goal_future = make_goal_future(GoalStatus.STATUS_SUCCEEDED, [0, 1])
 
         task_client._goal_done_cb(goal_future)
 
@@ -247,10 +237,7 @@ class TestActionTaskClient(unittest.TestCase):
         task_client = get_action_task_client("task_1")
         task_client.register_done_callback(self._done_cb)
         task_client._pause_state.pausing = True
-        goal_future = Future(executor=Mock())
-        goal_future._result = Fibonacci.Impl.GetResultService.Response(
-            status=GoalStatus.STATUS_CANCELED, result=Fibonacci.Result(sequence=[0, 1, 1])
-        )
+        goal_future = make_goal_future(GoalStatus.STATUS_CANCELED, [0, 1, 1])
 
         task_client._goal_done_cb(goal_future)
 
@@ -277,10 +264,7 @@ class TestActionTaskClient(unittest.TestCase):
             with self.subTest(name):
                 task_client = get_concat_action_task_client(result_concat_fields=concat_fields)
                 task_client._pause_state.paused_results = [Fibonacci.Result(sequence=seq) for seq in paused_segments]
-                goal_future = Future(executor=Mock())
-                goal_future._result = Fibonacci.Impl.GetResultService.Response(
-                    status=GoalStatus.STATUS_SUCCEEDED, result=Fibonacci.Result(sequence=final_segment)
-                )
+                goal_future = make_goal_future(GoalStatus.STATUS_SUCCEEDED, final_segment)
 
                 task_client._goal_done_cb(goal_future)
 
@@ -391,6 +375,15 @@ def get_action_task_client(
     return ActionTaskClient(
         Mock(spec=Node), task_details, task_specs=Mock(task_name=task_name), action_clients={task_name: Mock()}
     )
+
+
+def make_goal_future(status: int, sequence: list[int] | None = None) -> Future:
+    """Finished get-result future of a Fibonacci goal, in the form ActionTaskClient._goal_done_cb receives it."""
+    goal_future = Future(executor=Mock())
+    goal_future._result = Fibonacci.Impl.GetResultService.Response(
+        status=status, result=Fibonacci.Result(sequence=sequence or [])
+    )
+    return goal_future
 
 
 def get_concat_action_task_client(result_concat_fields) -> ActionTaskClient:
