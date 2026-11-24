@@ -30,6 +30,7 @@ from rosbridge_library.internal.message_conversion import extract_values
 from action_msgs.msg import GoalStatus
 from action_msgs.srv import CancelGoal
 from example_interfaces.action import Fibonacci
+from example_interfaces.srv import AddTwoInts
 
 # Task Manager messages
 from task_manager_msgs.msg import TaskStatus
@@ -347,14 +348,35 @@ class ServiceTaskClientUnittests(unittest.TestCase):
 
     def test_service_success_field(self):
         """Task's service_success_field sets the final task status correctly."""
-        task_client = ServiceTaskClient(
-            node=Mock(), task_details=Mock(), task_specs=Mock(service_success_field="success"), service_clients={}
+        test_cases = (
+            {"case": "Field set, service reports failure", "field": "success", "success": False, "status": "ERROR"},
+            {"case": "Field set, service reports success", "field": "success", "success": True, "status": "DONE"},
+            {"case": "No field set, response is ignored", "field": "", "success": False, "status": "DONE"},
         )
 
-        mock_future = Mock()
-        mock_future.result.return_value = Mock(success=False)
-        task_client._done_callback(future=mock_future)
-        self.assertEqual(task_client.task_details.status, TaskStatus.ERROR)
+        for test in test_cases:
+            with self.subTest(test["case"]):
+                task_specs = TaskSpecs(
+                    task_name="add_two_ints",
+                    topic="/add_two_ints",
+                    msg_interface=AddTwoInts,
+                    task_server_type=TaskServerType.SERVICE,
+                    service_success_field=test["field"],
+                )
+                task_details = TaskDetails(task_id="1", source="CLOUD", status=TaskStatus.IN_PROGRESS)
+                task_client = ServiceTaskClient(
+                    node=Mock(), task_details=task_details, task_specs=task_specs, service_clients={}
+                )
+                done_callback = Mock()
+                task_client.register_done_callback(done_callback)
+
+                mock_future = Mock()
+                mock_future.result.return_value = Mock(success=test["success"])
+                task_client._done_callback(future=mock_future)
+
+                self.assertEqual(task_details.status, getattr(TaskStatus, test["status"]))
+                done_callback.assert_called_once_with(task_specs, task_details)
+                self.assertTrue(task_client.goal_done)
 
     def test_pause_task_already_finished_succeeds(self):
         """Pausing a service-backed task that has already finished succeeds."""
