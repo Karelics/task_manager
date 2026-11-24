@@ -312,7 +312,7 @@ class TestActionTaskClient(unittest.TestCase):
         self.assertEqual(extract_values(task_client.task_details.result), {"sequence": [0, 1]})
 
 
-class ServiceTaskClientUnittests(unittest.TestCase):
+class TestServiceTaskClient(unittest.TestCase):
     """Unittests for ServiceTaskClient.
 
     Most of the functionality is tested with integration tests.

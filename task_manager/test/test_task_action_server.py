@@ -38,8 +38,8 @@ from task_manager.tasks.task_action_server import TaskActionServer
 # pylint: disable=protected-access
 
 
-class TestActionTaskClient(unittest.TestCase):
-    """Integration tests for ActionTaskClient."""
+class TestTaskActionServer(unittest.TestCase):
+    """Unit tests for TaskActionServer."""
 
     def setUp(self) -> None:
         rclpy.init()
