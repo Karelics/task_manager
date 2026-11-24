@@ -66,12 +66,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         # In the future, we need to have a way to abort the whole mission when we get a new blocking task, instead of
         # simply cancelling the individual sub-tasks. Now we might get a situation that while mission is running a
@@ -99,12 +94,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
         mission_id = self.get_mission_id()
@@ -130,12 +120,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
         active_tasks_by_id = {
@@ -180,12 +165,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("456")
         active_tasks_by_id = {
@@ -230,12 +210,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("456")
         active_tasks_by_id = {
@@ -274,12 +249,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("123456")
         active_tasks_by_id = {
@@ -312,12 +282,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(mission_goal)
 
         self.wait_for_task_start("fib1")
         self.wait_for_task_start("fib2")
@@ -379,9 +344,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal(task_name="system/mission", task_data=json.dumps(extract_values(outer_mission_goal)))
-        future = self.execute_task_client.send_goal_async(goal)
-        self._get_response(future, timeout=5)
+        self.start_mission(outer_mission_goal)
 
         self.wait_for_task_start("leaf")
 
@@ -408,12 +371,7 @@ class MissionTests(TaskManagerTestNode):
             ]
         )
 
-        goal = ExecuteTask.Goal()
-        goal.task_name = "system/mission"
-        goal.task_data = json.dumps(extract_values(mission_goal))
-
-        future = self.execute_task_client.send_goal_async(goal)
-        mission_goal_handle = self._get_response(future, timeout=5)
+        mission_goal_handle = self.start_mission(mission_goal)
 
         self.wait_for_task_start("123")
         mission_id = self.get_mission_id()
@@ -469,15 +427,12 @@ class MissionTests(TaskManagerTestNode):
                 ),
             ]
         )
-        goal = ExecuteTask.Goal(
-            task_name="system/mission", task_id="mission", task_data=json.dumps(extract_values(mission_goal))
-        )
         # The slow task is allowed to continue after the parallel cancel, like the robot's recording task
         self.task_manager_node.known_tasks["fibonacci_cancel_on_stop"].require_finish_on_parallel_cancel = False
         # Scaled down robot values: mission 5s (TaskSpecs default), parallel task 6s
         self.task_manager_node.known_tasks["system/mission"].cancel_timeout = 2.0
         self.task_manager_node.known_tasks["system/perform_in_parallel"].cancel_timeout = 2.4
-        mission_goal_handle = self._start_task(goal)
+        mission_goal_handle = self.start_mission(mission_goal, task_id="mission")
         self.wait_for_task_start("fast")
         self.wait_for_task_start("slow")
 
