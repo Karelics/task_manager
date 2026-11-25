@@ -293,6 +293,33 @@ class MissionUnittest(unittest.TestCase):
                 mock_goal_handle.succeed.assert_not_called()
                 self.assertEqual(result.mission_results[0].task_status, subtask_status)
 
+    def test_cancel_between_subtasks_does_not_start_the_next_subtask(self):
+        """A cancel that arrives after a subtask finished cancels the mission before the next subtask is dispatched."""
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="test/mock_subtask", task_data="{}", task_id="123"),
+                SubtaskGoal(task_name="test/mock_subtask", task_data="{}", task_id="456"),
+            ]
+        )
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        def execute_task(_goal, handle):
+            handle.is_cancel_requested = True
+            return ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = execute_task
+
+        result = self.mission.execute_cb(goal_handle=mock_goal_handle)
+
+        self.mission.execute_task_cb.assert_called_once()
+        mock_goal_handle.canceled.assert_called_once()
+        mock_goal_handle.succeed.assert_not_called()
+        mock_goal_handle.abort.assert_not_called()
+        self.assertEqual(
+            [subtask_result.task_status for subtask_result in result.mission_results],
+            [TaskStatus.DONE, TaskStatus.RECEIVED],
+        )
+
     def test_skipping_subtask(self):
         """Tests that even though a subtask fails, the mission does not abort when the subtask is allowed to be skipped.
 
