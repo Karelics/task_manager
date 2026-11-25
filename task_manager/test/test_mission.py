@@ -269,6 +269,8 @@ class MissionUnittest(unittest.TestCase):
             # (name, allow_skipping, cancel_while_running, subtask_status, expected goal handle call)
             ("canceled", False, True, TaskStatus.CANCELED, "canceled"),
             ("error", False, False, TaskStatus.ERROR, "abort"),
+            # Canceled would be better, but cannot since the server cannot set canceled without request
+            ("canceled_on_its_own", False, False, TaskStatus.CANCELED, "abort"),
             ("canceled_with_allow_skipping", True, True, TaskStatus.CANCELED, "canceled"),
             ("error_while_canceled_with_allow_skipping", True, True, TaskStatus.ERROR, "abort"),
         ]
