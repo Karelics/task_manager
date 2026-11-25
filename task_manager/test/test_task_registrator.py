@@ -119,6 +119,21 @@ class TestTaskRegistrator(unittest.TestCase):
         mock_cancel_task.assert_called_once()
         self.assertEqual(self.active_tasks.get_active_tasks(), [running_task])
 
+    def test_is_nested_mission_start(self):
+        """Only a system/mission started by a composite task (Mission, ParallelExecutor, AtomicSequence) is nested."""
+        cases = [
+            ("system/mission", "Mission", True),
+            ("system/mission", "ParallelExecutor-123", True),
+            ("system/mission", "AtomicSequence", True),
+            ("system/mission", "", False),
+            ("system/mission", "CLOUD", False),
+            ("fibonacci", "Mission", False),
+        ]
+        for task_name, source, expected in cases:
+            with self.subTest(task_name=task_name, source=source):
+                request = ExecuteTask.Goal(task_name=task_name, source=source)
+                self.assertEqual(TaskRegistrator._is_nested_mission_start(request), expected)
+
     def test_populate_msg_with_invalid_data(self):
         """Checks that parsing invalid task_data (json-formatted ROS Msg) is handled correctly."""
         test_cases = (

@@ -295,6 +295,21 @@ class MissionUnittest(unittest.TestCase):
                 mock_goal_handle.succeed.assert_not_called()
                 self.assertEqual(result.mission_results[0].task_status, subtask_status)
 
+    def test_subtasks_are_started_with_mission_as_source(self):
+        """TaskRegistrator relies on the "Mission" source to not cancel a nested mission's own outer mission."""
+        request = MissionAction.Goal(
+            subtasks=[SubtaskGoal(task_name="test/mock_subtask", task_data='{"a": 1}', task_id="123")]
+        )
+        self.mission.execute_task_cb.return_value = ExecuteTask.Result(task_status=TaskStatus.DONE, task_result="{}")
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        self.mission.execute_cb(goal_handle=mock_goal_handle)
+
+        goal = self.mission.execute_task_cb.call_args.args[0]
+        self.assertEqual(
+            goal, ExecuteTask.Goal(task_id="123", task_name="test/mock_subtask", task_data='{"a": 1}', source="Mission")
+        )
+
     def test_cancel_between_subtasks_does_not_start_the_next_subtask(self):
         """A cancel that arrives after a subtask finished cancels the mission before the next subtask is dispatched."""
         request = MissionAction.Goal(
