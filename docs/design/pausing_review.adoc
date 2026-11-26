@@ -467,7 +467,8 @@ Write the failing tests first, so that each later change is proven. Add to `inte
 * `slow_cancel` server whose cancel takes a configurable time (B6, B9).
 * `slow_accept` server whose goal acceptance is delayed (B4).
 
-Then one failing test per bug in the catalogue, marked `xfail` with the bug id. Run the loop-style race tests (B2) with
+Then one failing test per bug in the catalogue, named `test_b<N>_<what>` after the bug id and marked
+`@unittest.expectedFailure` (the harness is `unittest`, so not `xfail`). Run the loop-style race tests (B2) with
 a repeat count so flakiness is visible. Verify the `rclpy` assumption of B11 here.
 
 Make sure we have tests for all the TaskManager features.
@@ -646,10 +647,17 @@ last column.
 == Appendix A: test coverage gaps
 
 * No test combines a server that finishes (succeeds or aborts) on cancel with pause (B1, B9). A throwaway client-level repro written for this review
-  (not committed) confirms B1; Phase 0 should turn it into proper `xfail` tests.
+  (not committed) confirms B1; Phase 0 should turn it into proper `expectedFailure` tests.
 * `test_task_clients.py:116-117` covers `ERROR_GOAL_TERMINATED` and `ERROR_UNKNOWN_GOAL_ID` for cancel only (B11).
 * No concurrency tests for pause, resume, cancel and start (B2). `test_pause_thread_starvation.py` is the only
   concurrency-oriented test and covers executor starvation only.
 * `test_composite_resolution.py` (738 lines) works with mocks and exercises resolution in isolation. It does not cover
   startup windows (B4), stale ids (B13) or a failing leaf (B3, B7).
 * No test for resume conflicting with a running same-type or blocking task (B10).
+
+=== Gaps found while filling coverage (not pausing-related)
+
+* *Mission where every subtask is skippable and fails.* `test_allow_skipping_all_fail` (`test_mission.py`) expects the
+  Mission to abort. The behaviour is not implemented: `Mission.execute_cb` ends with `succeed()` whenever every failure
+  was skipped. The test is marked `@unittest.expectedFailure` (not `xfail`, the harness is `unittest`). Remove the marker
+  in the change that implements it. It is not tied to a bug id and not part of the Phase 0 `expectedFailure` count.
