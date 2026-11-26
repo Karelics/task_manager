@@ -257,43 +257,80 @@ class MissionUnittest(unittest.TestCase):
             future.result(timeout=2)
             goal_handle.succeed.assert_called_once()
 
-    def test_mission_not_successful(self):
-        """Tests that the Mission ends up canceled or aborted, and that the subtask's status is recorded in the result,
-        when a subtask is cancelled or fails, with and without `allow_skipping`.
+    def test_last_subtask_outcome(self):
+        """Tests mission end when the mission's last subtask finishes.
 
-        A cancel that arrives while the subtask is running must still let the subtask be dispatched, and only be decided
-        on cancel-vs-abort once its result comes back. `allow_skipping` must not save a subtask once the mission itself
-        is being cancelled.
+        All combinations of subtask status, allow_skipping, and mission cancel requested are tested and the expected
+        outcome for the mission is verified, as well as the recorded status of the last subtask.
         """
         cases = [
-            # (name, allow_skipping, cancel_while_running, subtask_status, expected goal handle call)
-            ("canceled", False, True, TaskStatus.CANCELED, "canceled"),
-            ("error", False, False, TaskStatus.ERROR, "abort"),
-            # Canceled would be better, but cannot since the server cannot set canceled without request
-            ("canceled_on_its_own", False, False, TaskStatus.CANCELED, "abort"),
-            ("canceled_with_allow_skipping", True, True, TaskStatus.CANCELED, "canceled"),
-            ("error_while_canceled_with_allow_skipping", True, True, TaskStatus.ERROR, "abort"),
+            # (subtask status, allow_skipping, mission cancel requested, expected goal handle call, expected skipped)
+            (TaskStatus.DONE, False, False, "succeed", False),
+            (TaskStatus.DONE, True, False, "succeed", False),
+            (TaskStatus.DONE, False, True, "succeed", False),
+            (TaskStatus.DONE, True, True, "succeed", False),
+            (TaskStatus.ERROR, False, False, "abort", False),
+            (TaskStatus.ERROR, True, False, "succeed", True),  # see test_allow_skipping_all_fail
+            # (TaskStatus.ERROR, True, False, "abort", True),  # see test_allow_skipping_all_fail
+            (TaskStatus.ERROR, False, True, "abort", False),  # TODO: Set to canceled - cancel was requested
+            (TaskStatus.ERROR, True, True, "abort", False),  # TODO: Set to canceled - cancel was requested
+            (TaskStatus.CANCELED, False, False, "abort", False),  # Cannot set to canceled without request
+            (TaskStatus.CANCELED, True, False, "succeed", True),  # Skipping leads to success
+            (TaskStatus.CANCELED, False, True, "canceled", False),
+            (TaskStatus.CANCELED, True, True, "canceled", False),
         ]
-        for name, allow_skipping, cancel_while_running, subtask_status, expected_call in cases:
-            with self.subTest(name):
+        for subtask_status, allow_skipping, cancel_requested, expected_call, expected_skipped in cases:
+            with self.subTest(status=subtask_status, allow_skipping=allow_skipping, cancel_requested=cancel_requested):
                 request = MissionAction.Goal(
                     subtasks=[SubtaskGoal(task_name="test/mock_subtask", allow_skipping=allow_skipping, task_data="{}")]
                 )
                 mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
 
                 def execute_task(
-                    _goal, _goal_handle, handle=mock_goal_handle, cancel=cancel_while_running, status=subtask_status
+                    _goal, _goal_handle, mission_handle=mock_goal_handle, cancel=cancel_requested, status=subtask_status
                 ):
-                    handle.is_cancel_requested = cancel
+                    mission_handle.is_cancel_requested = cancel
                     return ExecuteTask.Result(task_status=status, task_result="{}")
 
                 self.mission.execute_task_cb.side_effect = execute_task
 
                 result = self.mission.execute_cb(goal_handle=mock_goal_handle)
 
-                getattr(mock_goal_handle, expected_call).assert_called_once()
-                mock_goal_handle.succeed.assert_not_called()
+                for call in ("succeed", "abort", "canceled"):
+                    mock = getattr(mock_goal_handle, call)
+                    if call == expected_call:
+                        mock.assert_called_once()
+                    else:
+                        mock.assert_not_called()
                 self.assertEqual(result.mission_results[0].task_status, subtask_status)
+                self.assertEqual(result.mission_results[0].skipped, expected_skipped)
+
+    @unittest.expectedFailure
+    def test_allow_skipping_all_fail(self):
+        """If all subtasks are allowed to be skipped and fail, the mission should abort.
+
+        In this case it sounds silly if the mission were to succeed despite all subtasks failing.
+
+        TODO: Implement proper handling for missions where all subtasks are allowed to be skipped and fail.
+        """
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}", task_id="123"),
+                SubtaskGoal(task_name="test/mock_subtask", allow_skipping=True, task_data="{}", task_id="456"),
+            ]
+        )
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        def execute_task(_goal, handle):
+            return ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}")
+
+        self.mission.execute_task_cb.side_effect = execute_task
+
+        self.mission.execute_cb(goal_handle=mock_goal_handle)
+
+        mock_goal_handle.abort.assert_called_once()
+        mock_goal_handle.succeed.assert_not_called()
+        mock_goal_handle.canceled.assert_not_called()
 
     def test_subtasks_are_started_with_mission_as_source(self):
         """TaskRegistrator relies on the "Mission" source to not cancel a nested mission's own outer mission."""
