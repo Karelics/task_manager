@@ -104,6 +104,26 @@ class AtomicSequenceUnittest(unittest.TestCase):
         self.assertFalse(result.results[1].skipped)
         goal_handle.succeed.assert_called_once()
 
+    def test_failed_subtask_after_a_skipped_one_aborts(self):
+        """A skipped subtask does not carry over to the next one: when that fails too, the atomic sequence aborts, is
+        not marked skipped, and the remaining subtasks are not started."""
+        # A third call would raise StopIteration, failing the test.
+        self.atomic_sequence.execute_task_cb.side_effect = [
+            result_with(TaskStatus.ERROR),
+            result_with(TaskStatus.ERROR),
+        ]
+        goal_handle = make_goal_handle([subtask("a", allow_skipping=True), subtask("b"), subtask("c")])
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.abort.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+        goal_handle.canceled.assert_not_called()
+        self.assertEqual(
+            [(r.task_status, r.skipped) for r in result.results],
+            [(TaskStatus.ERROR, True), (TaskStatus.ERROR, False), (TaskStatus.RECEIVED, False)],
+        )
+
     def test_cancel_before_first_subtask(self):
         """A cancel (or pause) arriving before the first subtask starts doesn't start anything."""
         goal_handle = make_goal_handle([subtask("a")], is_cancel_requested=True)

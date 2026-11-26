@@ -305,6 +305,33 @@ class MissionUnittest(unittest.TestCase):
                 self.assertEqual(result.mission_results[0].task_status, subtask_status)
                 self.assertEqual(result.mission_results[0].skipped, expected_skipped)
 
+    def test_failed_subtask_after_a_skipped_one_aborts(self):
+        """A skipped subtask does not carry over to the next one: when that fails too, the mission aborts, is not marked
+        skipped, and the remaining subtasks are not started."""
+        request = MissionAction.Goal(
+            subtasks=[
+                SubtaskGoal(task_name="test/mock_subtask", task_data="{}", allow_skipping=True, task_id="1"),
+                SubtaskGoal(task_name="test/mock_subtask", task_data="{}", task_id="2"),
+                SubtaskGoal(task_name="test/mock_subtask", task_data="{}", task_id="3"),
+            ]
+        )
+        # A third call would raise StopIteration, failing the test.
+        self.mission.execute_task_cb.side_effect = [
+            ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}"),
+            ExecuteTask.Result(task_status=TaskStatus.ERROR, task_result="{}"),
+        ]
+        mock_goal_handle = Mock(request=request, goal_id=Mock(uuid=[0] * 16), is_cancel_requested=False)
+
+        result = self.mission.execute_cb(goal_handle=mock_goal_handle)
+
+        mock_goal_handle.abort.assert_called_once()
+        mock_goal_handle.succeed.assert_not_called()
+        mock_goal_handle.canceled.assert_not_called()
+        self.assertEqual(
+            [(r.task_status, r.skipped) for r in result.mission_results],
+            [(TaskStatus.ERROR, True), (TaskStatus.ERROR, False), (TaskStatus.RECEIVED, False)],
+        )
+
     @unittest.expectedFailure
     def test_allow_skipping_all_fail(self):
         """If all subtasks are allowed to be skipped and fail, the mission should abort.
