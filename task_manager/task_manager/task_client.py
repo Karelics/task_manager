@@ -193,15 +193,9 @@ class ActionTaskClient(TaskClient):
 
         if not self._client.wait_for_server(timeout_sec=self.server_wait_timeout):
             self.task_details.status = TaskStatus.ERROR
-            raise TaskStartError(f"Action server {self.task_specs.topic} not available.")
+            raise TaskStartError(f"Action server {self.task_specs.topic} not available, unable to start the task.")
 
-        try:
-            send_goal_future = self._client.send_goal_async(goal=goal_message)
-        except TimeoutError:
-            self.task_details.status = TaskStatus.ERROR
-            raise TaskStartError(
-                f"Action server {self.task_specs.topic} not available, unable to start the task."
-            ) from None
+        send_goal_future = self._client.send_goal_async(goal=goal_message)
 
         try:
             self._wait_for_future_to_complete(send_goal_future, timeout=self.server_wait_timeout)

@@ -104,6 +104,26 @@ class AtomicSequenceUnittest(unittest.TestCase):
         self.assertFalse(result.results[1].skipped)
         goal_handle.succeed.assert_called_once()
 
+    def test_failed_subtask_after_a_skipped_one_aborts(self):
+        """A skipped subtask does not carry over to the next one: when that fails too, the atomic sequence aborts, is
+        not marked skipped, and the remaining subtasks are not started."""
+        # A third call would raise StopIteration, failing the test.
+        self.atomic_sequence.execute_task_cb.side_effect = [
+            result_with(TaskStatus.ERROR),
+            result_with(TaskStatus.ERROR),
+        ]
+        goal_handle = make_goal_handle([subtask("a", allow_skipping=True), subtask("b"), subtask("c")])
+
+        result = self.atomic_sequence.execute_cb(goal_handle)
+
+        goal_handle.abort.assert_called_once()
+        goal_handle.succeed.assert_not_called()
+        goal_handle.canceled.assert_not_called()
+        self.assertEqual(
+            [(r.task_status, r.skipped) for r in result.results],
+            [(TaskStatus.ERROR, True), (TaskStatus.ERROR, False), (TaskStatus.RECEIVED, False)],
+        )
+
     def test_cancel_before_first_subtask(self):
         """A cancel (or pause) arriving before the first subtask starts doesn't start anything."""
         goal_handle = make_goal_handle([subtask("a")], is_cancel_requested=True)
@@ -129,42 +149,6 @@ class AtomicSequenceUnittest(unittest.TestCase):
         goal_handle.canceled.assert_called_once()
         goal_handle.succeed.assert_not_called()
 
-    def test_cancel_after_last_subtask_done_succeeds(self):
-        """A cancel (or pause) arriving after the last subtask already finished successfully is too late: the atomic
-        sequence succeeds instead of ending CANCELED, so that a resume doesn't rerun every subtask."""
-        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
-
-        def cancel_during_last(_goal, handle):
-            if self.atomic_sequence.execute_task_cb.call_count == 2:
-                handle.is_cancel_requested = True
-            return result_with(TaskStatus.DONE)
-
-        self.atomic_sequence.execute_task_cb.side_effect = cancel_during_last
-
-        result = self.atomic_sequence.execute_cb(goal_handle)
-
-        goal_handle.succeed.assert_called_once()
-        goal_handle.canceled.assert_not_called()
-        goal_handle.abort.assert_not_called()
-        self.assertEqual([r.task_status for r in result.results], [TaskStatus.DONE, TaskStatus.DONE])
-
-    def test_cancel_during_last_subtask_ends_canceled(self):
-        """If the last subtask itself got cancelled (didn't finish DONE), the atomic sequence still ends CANCELED."""
-        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
-
-        def cancel_last(_goal, handle):
-            if self.atomic_sequence.execute_task_cb.call_count == 2:
-                handle.is_cancel_requested = True
-                return result_with(TaskStatus.CANCELED)
-            return result_with(TaskStatus.DONE)
-
-        self.atomic_sequence.execute_task_cb.side_effect = cancel_last
-
-        self.atomic_sequence.execute_cb(goal_handle)
-
-        goal_handle.canceled.assert_called_once()
-        goal_handle.succeed.assert_not_called()
-
     def test_cancel_ends_canceled_even_if_subtask_aborts(self):
         """If the running subtask reports an error instead of CANCELED when the atomic sequence is cancelled (e.g. its
         server aborts on cancel), the atomic sequence must still end CANCELED, so that a pause is recognised as a
@@ -182,23 +166,55 @@ class AtomicSequenceUnittest(unittest.TestCase):
         goal_handle.canceled.assert_called_once()
         goal_handle.abort.assert_not_called()
 
-    def test_cancel_aborts_if_subtask_cancel_failed(self):
-        """If the running subtask could not be cancelled (still IN_PROGRESS), the atomic sequence must abort instead of
-        reporting CANCELED, so that a pause isn't reported as successful while the subtask keeps running."""
-        goal_handle = make_goal_handle([subtask("a"), subtask("b")])
+    def test_last_subtask_outcome(self):
+        """Tests how the atomic sequence ends, and what is recorded for its (only, so last) subtask, for every
+        combination of the subtask's status, `allow_skipping` and a cancel (or pause) of the atomic sequence arriving
+        while the subtask runs.
 
-        def cancel_fails(_goal, handle):
-            handle.is_cancel_requested = True
-            return result_with(TaskStatus.IN_PROGRESS)
+        A cancel arriving after the last subtask already finished DONE is too late, so the atomic sequence succeeds.
+        Otherwise a cancel ends it CANCELED, whatever the subtask reported (its server may abort on cancel) and even if
+        the subtask is skippable, so that a pause is not mistaken for a failure or a skip. Only a subtask that could not
+        be cancelled (still IN_PROGRESS) aborts the atomic sequence, so that a failed pause is not reported as success.
+        """
+        cases = [
+            # (subtask status, allow_skipping, cancel requested, expected goal handle call, expected skipped)
+            (TaskStatus.DONE, False, False, "succeed", False),
+            (TaskStatus.DONE, True, False, "succeed", False),
+            (TaskStatus.DONE, False, True, "succeed", False),
+            (TaskStatus.DONE, True, True, "succeed", False),
+            (TaskStatus.ERROR, False, False, "abort", False),
+            # The last subtask is skipped, but the atomic sequence still reports success. Pins the current behaviour.
+            (TaskStatus.ERROR, True, False, "succeed", True),
+            (TaskStatus.ERROR, False, True, "canceled", False),
+            (TaskStatus.ERROR, True, True, "canceled", False),
+            (TaskStatus.CANCELED, False, False, "abort", False),
+            # Same as the skipped ERROR above. Pins the current behaviour.
+            (TaskStatus.CANCELED, True, False, "succeed", True),
+            (TaskStatus.CANCELED, False, True, "canceled", False),
+            (TaskStatus.CANCELED, True, True, "canceled", False),
+            (TaskStatus.IN_PROGRESS, False, True, "abort", False),
+            (TaskStatus.IN_PROGRESS, True, True, "abort", False),
+        ]
+        for subtask_status, allow_skipping, cancel_requested, expected_call, expected_skipped in cases:
+            with self.subTest(status=subtask_status, allow_skipping=allow_skipping, cancel_requested=cancel_requested):
 
-        self.atomic_sequence.execute_task_cb.side_effect = cancel_fails
+                def execute_task(_goal, goal_handle):
+                    goal_handle.is_cancel_requested = cancel_requested
+                    return result_with(subtask_status)
 
-        result = self.atomic_sequence.execute_cb(goal_handle)
+                self.atomic_sequence.execute_task_cb.side_effect = execute_task
+                goal_handle = make_goal_handle([subtask("a", allow_skipping=allow_skipping)])
 
-        goal_handle.abort.assert_called_once()
-        goal_handle.canceled.assert_not_called()
-        self.assertEqual(self.atomic_sequence.execute_task_cb.call_count, 1)
-        self.assertEqual(result.results[0].task_status, TaskStatus.IN_PROGRESS)
+                result = self.atomic_sequence.execute_cb(goal_handle)
+
+                for call in ("succeed", "abort", "canceled"):
+                    mock = getattr(goal_handle, call)
+                    if call == expected_call:
+                        mock.assert_called_once()
+                    else:
+                        mock.assert_not_called()
+                self.assertEqual(result.results[0].task_status, subtask_status)
+                self.assertEqual(result.results[0].skipped, expected_skipped)
 
     def test_get_active_children_tracks_progress(self):
         """The currently running subtask is reported as the only active child, cleared once the atomic sequence

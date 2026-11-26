@@ -356,7 +356,10 @@ class TaskManager(Node):
                 task_client.cancel_task()
                 break
             time.sleep(1 / 50)
-        return task_client.task_details.status, json.dumps(extract_values(task_client.task_details.result))
+        result = task_client.task_details.result
+        # No result if the loop ended because rclpy shut down while the task was still running
+        task_result = json.dumps(extract_values(result)) if result is not None else ""
+        return task_client.task_details.status, task_result
 
     def _active_tasks_changed_cb(self, active_tasks: dict[str, TaskClient]) -> None:
         """Publishes active tasks to local ROS topic."""

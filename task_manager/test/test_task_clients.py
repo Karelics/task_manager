@@ -121,6 +121,28 @@ class TestActionTaskClient(unittest.TestCase):
             with self.subTest(case["case"]):
                 self.assertRaises(CancelTaskFailedError, task_client.cancel_task)
 
+    @patch("task_manager.task_client.ActionTaskClient._request_canceling")
+    def test_cancel_task_when_server_no_longer_knows_the_goal(self, mock_request_canceling: Mock):
+        """If the server says the goal is unknown or already terminated, the task is considered canceled."""
+        return_codes = [CancelGoal.Response.ERROR_UNKNOWN_GOAL_ID, CancelGoal.Response.ERROR_GOAL_TERMINATED]
+
+        for return_code in return_codes:
+            with self.subTest(return_code=return_code):
+                task_client = get_concat_action_task_client([])
+                task_client._goal_handle = Mock(status=GoalStatus.STATUS_EXECUTING)
+                task_client._result_future = Future()
+                task_client._result_future.add_done_callback(task_client._goal_done_cb)
+                done_callback = Mock()
+                task_client.register_done_callback(done_callback)
+                mock_request_canceling.return_value = CancelGoal.Response(return_code=return_code)
+
+                task_client.cancel_task()
+
+                self.assertEqual(task_client.task_details.status, TaskStatus.CANCELED)
+                self.assertEqual(task_client.task_details.result, Fibonacci.Result())
+                done_callback.assert_called_once()
+                self.assertTrue(task_client.goal_done)
+
     def test_cancel_task_short_circuits_when_paused(self):
         """Cancelling an already-paused task must finish it directly, without touching the (gone) goal handle."""
         task_client = get_action_task_client("task_1")

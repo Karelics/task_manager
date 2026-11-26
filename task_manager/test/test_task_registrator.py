@@ -28,6 +28,7 @@ from task_manager_msgs.srv import StopTasks
 
 # Task Manager
 from task_manager.active_tasks import ActiveTasks
+from task_manager.task_client import CancelTaskFailedError, TaskStartError
 from task_manager.task_registrator import DuplicateTaskIdException, ROSGoalParsingError, TaskRegistrator, populate_msg
 from task_manager.task_specs import TaskServerType, TaskSpecs
 
@@ -96,6 +97,42 @@ class TestTaskRegistrator(unittest.TestCase):
         mock_cancel_task.assert_not_called()
         self.assertEqual(paused_task.task_details.status, TaskStatus.PAUSED)
         self.assertCountEqual(self.active_tasks.get_active_tasks(), [paused_task, new_task])
+
+    def test_blocking_task_start_fails_if_running_blocking_task_cannot_be_cancelled(self):
+        """A new blocking task is rejected when the running blocking task of another name refuses to cancel."""
+        blocking_specs = [
+            TaskSpecs(
+                task_name=name, topic="", msg_interface=Fibonacci, task_server_type=TaskServerType.ACTION, blocking=True
+            )
+            for name in ("blocking_1", "blocking_2")
+        ]
+        self.task_registrator._action_clients = {"blocking_1": "", "blocking_2": ""}
+        request = ExecuteTask.Goal(task_id="111", task_name="blocking_1", task_data='{"order": 5}', source="")
+        running_task = self.task_registrator.start_new_task(request, blocking_specs[0])
+        running_task.task_details.status = TaskStatus.IN_PROGRESS
+
+        with mock.patch.object(running_task, "cancel_task", side_effect=CancelTaskFailedError) as mock_cancel_task:
+            request = ExecuteTask.Goal(task_id="222", task_name="blocking_2", task_data='{"order": 5}', source="")
+            with self.assertRaises(TaskStartError):
+                self.task_registrator.start_new_task(request, blocking_specs[1])
+
+        mock_cancel_task.assert_called_once()
+        self.assertEqual(self.active_tasks.get_active_tasks(), [running_task])
+
+    def test_is_nested_mission_start(self):
+        """Only a system/mission started by a composite task (Mission, ParallelExecutor, AtomicSequence) is nested."""
+        cases = [
+            ("system/mission", "Mission", True),
+            ("system/mission", "ParallelExecutor-123", True),
+            ("system/mission", "AtomicSequence", True),
+            ("system/mission", "", False),
+            ("system/mission", "CLOUD", False),
+            ("fibonacci", "Mission", False),
+        ]
+        for task_name, source, expected in cases:
+            with self.subTest(task_name=task_name, source=source):
+                request = ExecuteTask.Goal(task_name=task_name, source=source)
+                self.assertEqual(TaskRegistrator._is_nested_mission_start(request), expected)
 
     def test_populate_msg_with_invalid_data(self):
         """Checks that parsing invalid task_data (json-formatted ROS Msg) is handled correctly."""
